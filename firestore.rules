@@ -1,0 +1,93 @@
+rules_version = '2';
+
+// =====================================================================
+//  Regras de segurança do Firestore — Sistema de Atendimentos
+//  Cole este arquivo em: Console do Firebase > Firestore Database > Regras > Publicar
+//
+//  EDITE AS DUAS FUNÇÕES ABAIXO (devem bater com o config.js):
+// =====================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // E-mail da empresa, já confirmado pelo link enviado ao Outlook
+    // (expressão regular; o ponto vira [.]).  Dois domínios: '.*@(it2b[.]com[.]br|outra[.]com)'
+    function dominioOk() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && request.auth.token.email.lower().matches('.*@it2b[.]com[.]br');
+    }
+
+    // E-mail(s) do líder que já entram como administrador
+    function adminInicial() {
+      return request.auth.token.email.lower() in ['emerson.araujo@it2b.com.br'];
+    }
+
+    // ------------------------------------------------------------- auxiliares
+    function caminhoEu() { return /databases/$(database)/documents/usuarios/$(request.auth.uid); }
+    function eu() { return get(caminhoEu()).data; }
+    function ativo() { return dominioOk() && exists(caminhoEu()) && eu().ativo == true; }
+    function admin() { return ativo() && eu().perfil == 'admin'; }
+
+    function textoOk(d, k, max) { return !(k in d) || (d[k] is string && d[k].size() <= max); }
+
+    function atendimentoValido(d) {
+      return d.keys().hasOnly(['uid', 'tecnico', 'smax', 'comarca', 'inicio', 'termino', 'ticket_softplan',
+                               'status', 'encaminhado_para', 'home_local', 'agendamento', 'usuario_atendido',
+                               'obs', 'data_ref', 'mes', 'criado_em', 'atualizado_em'])
+        && d.keys().hasAll(['uid', 'smax', 'comarca', 'status', 'mes'])
+        && d.uid is string
+        && d.mes is string && d.mes.matches('[0-9]{4}-[0-9]{2}')
+        && d.status in ['', 'ENCAMINHADO', 'TENT CONTATO', 'AGENDADO', 'FECHADO']
+        && (!('home_local' in d) || d.home_local in ['', 'HOME', 'LOCAL'])
+        && d.comarca is string && d.comarca.size() > 0
+        && textoOk(d, 'smax', 60) && textoOk(d, 'comarca', 120) && textoOk(d, 'tecnico', 80)
+        && textoOk(d, 'inicio', 16) && textoOk(d, 'termino', 16) && textoOk(d, 'agendamento', 16)
+        && textoOk(d, 'ticket_softplan', 60) && textoOk(d, 'encaminhado_para', 40)
+        && textoOk(d, 'usuario_atendido', 120) && textoOk(d, 'obs', 2000) && textoOk(d, 'data_ref', 10);
+    }
+
+    // ------------------------------------------------------------- usuários
+    match /usuarios/{uid} {
+      // cada um lê o próprio perfil (mesmo pendente); quem está ativo vê a equipe
+      allow read: if (dominioOk() && request.auth.uid == uid) || ativo();
+
+      // criar o próprio perfil no primeiro acesso:
+      //   técnico entra como pendente (ativo=false) até o líder liberar;
+      //   e-mail listado em adminInicial() entra direto como admin.
+      allow create: if dominioOk() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['nome', 'email', 'perfil', 'ativo', 'criado_em'])
+        && request.resource.data.nome is string
+        && request.resource.data.nome.size() > 0 && request.resource.data.nome.size() <= 80
+        && request.resource.data.email == request.auth.token.email.lower()
+        && ((request.resource.data.perfil == 'tecnico' && request.resource.data.ativo == false)
+            || (request.resource.data.perfil == 'admin' && request.resource.data.ativo == true && adminInicial()));
+
+      // admin: muda nome, perfil e libera/bloqueia (campos ativo e bloqueado) (não pode mexer no próprio perfil/ativo)
+      // usuário ativo: só muda o próprio nome
+      allow update: if (admin() && uid != request.auth.uid
+                         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome', 'perfil', 'ativo', 'bloqueado'])
+                         && request.resource.data.perfil in ['admin', 'tecnico']
+                         && request.resource.data.ativo is bool)
+                    || (ativo() && uid == request.auth.uid
+                         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome']));
+
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------- atendimentos
+    match /atendimentos/{id} {
+      allow read: if ativo();
+      allow create: if ativo() && atendimentoValido(request.resource.data)
+        && (request.resource.data.uid == request.auth.uid || admin());
+      allow update: if ativo() && atendimentoValido(request.resource.data)
+        && ((resource.data.uid == request.auth.uid && request.resource.data.uid == request.auth.uid) || admin());
+      allow delete: if ativo() && (resource.data.uid == request.auth.uid || admin());
+    }
+
+    // qualquer outra coleção: bloqueada
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
