@@ -230,3 +230,11 @@ tr.sel td{background:var(--brand-soft)!important;font-weight:600}
 tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--brand-2)}
 tr.apagado td{color:var(--ink-3)}
 tr.apagado td.tempo{color:var(--ink-3)}
+.kpi small.fora{display:block;font-size:11px;color:var(--ink-3);margin-top:2px}
+.cal-tent{position:absolute;top:6px;right:8px;font-size:10.5px;font-weight:700;color:var(--st-tent);background:var(--st-tent-bg);border-radius:999px;padding:1px 6px}
+th.col-tent,td.col-tent{background:#fffaf2}
+td.tempo-tent{font-weight:600;color:var(--st-tent)}
+tr.sel td.col-tent{background:var(--brand-soft)!important}
+.grid2>*{min-width:0}
+.graficos{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px;align-items:start}
+@media (max-width:900px){.graficos{grid-template-columns:1fr}}

@@ -531,7 +531,17 @@ function tempos(r, lista) {
   r.com_tempo = ms.length;
   r.min_medio = ms.length ? Math.round(r.min_total / ms.length) : null;
 }
+// tempo gasto nas tentativas de contato (fica separado dos atendimentos)
+function temposTent(r, lista) {
+  const ms = lista.filter(a => !contaComoAtendido(a)).map(minutosDe).filter(m => m !== null);
+  r.tent_min_total = ms.reduce((t, m) => t + m, 0);
+  r.tent_com_tempo = ms.length;
+  r.tent_min_medio = ms.length ? Math.round(r.tent_min_total / ms.length) : null;
+}
 const fmtMin = m => m === null || m === undefined ? '—' : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
+
+// "Tentativa de contato" não conta como chamado atendido no painel
+const contaComoAtendido = a => a.status !== 'TENT CONTATO';
 
 function montarPainel(mes, lista) {
   const ids = new Set(S.usuarios.filter(u => u.ativo).map(u => u.id));
@@ -540,14 +550,15 @@ function montarPainel(mes, lista) {
     const m = lista.filter(a => a.uid === uid); const c = k => m.filter(a => a.status === k).length;
     const r = { uid, nome: nomeDe(uid, (m[0] || {}).tecnico), encaminhado: c('ENCAMINHADO'), tent_contato: c('TENT CONTATO'), agendado: c('AGENDADO'), fechado: c('FECHADO'),
       home: m.filter(a => a.home_local === 'HOME').length, local: m.filter(a => a.home_local === 'LOCAL').length };
-    r.total = r.encaminhado + r.tent_contato + r.agendado + r.fechado;
-    tempos(r, m); return r;
+    r.total = r.encaminhado + r.agendado + r.fechado;   // tentativa de contato fica de fora
+    tempos(r, m.filter(contaComoAtendido)); temposTent(r, m); return r;
   }).sort((a, b) => a.nome.localeCompare(b.nome));
   const total = { nome: 'TOTAL' };
   for (const k of ['encaminhado', 'tent_contato', 'agendado', 'fechado', 'home', 'local', 'total']) total[k] = linhas.reduce((t, r) => t + r[k], 0);
-  tempos(total, lista);
-  const destinos = ENCAMINHADO_PARA.map(d => ({ destino: d, n: lista.filter(a => a.encaminhado_para === d).length }));
-  const cont = {}; lista.forEach(a => { if (a.comarca) cont[a.comarca] = (cont[a.comarca] || 0) + 1; });
+  const atendidos = lista.filter(contaComoAtendido);
+  tempos(total, atendidos); temposTent(total, lista);
+  const destinos = ENCAMINHADO_PARA.map(d => ({ destino: d, n: atendidos.filter(a => a.encaminhado_para === d).length }));
+  const cont = {}; atendidos.forEach(a => { if (a.comarca) cont[a.comarca] = (cont[a.comarca] || 0) + 1; });
   const porComarca = Object.entries(cont).map(([comarca, n]) => ({ comarca, n })).sort((a, b) => b.n - a.n).slice(0, 10);
   const du = diasUteis(mes);
   return { mes, linhas, total, destinos, porComarca, diasUteis: du, mediaDiaria: du ? +(total.total / du).toFixed(1) : 0 };
@@ -572,7 +583,7 @@ async function telaPainel(main) {
     const T = uid ? sel : geral.total;
     const media = p.diasUteis ? +(T.total / p.diasUteis).toFixed(1) : 0;
     const linha = (r, tot) => `<tr class="${tot ? 'total' : ''} click ${!tot && r.uid === uid ? 'sel' : ''} ${uid && !tot && r.uid !== uid ? 'apagado' : ''}" data-uid="${tot ? '' : esc(r.uid)}" title="${tot ? 'Ver todos os técnicos' : 'Ver só ' + esc(r.nome)}">
-      <td>${esc(r.nome)}</td><td class="num">${r.encaminhado}</td><td class="num">${r.tent_contato}</td><td class="num">${r.agendado}</td><td class="num">${r.fechado}</td><td class="num">${r.home}</td><td class="num">${r.local}</td><td class="num"><b>${r.total}</b></td><td class="num">${r.com_tempo ? fmtMin(r.min_total) : '—'}</td><td class="num tempo" title="${r.com_tempo} atendimento(s) com início e término">${fmtMin(r.min_medio)}</td></tr>`;
+      <td>${esc(r.nome)}</td><td class="num">${r.encaminhado}</td><td class="num">${r.tent_contato}</td><td class="num">${r.agendado}</td><td class="num">${r.fechado}</td><td class="num">${r.home}</td><td class="num">${r.local}</td><td class="num"><b>${r.total}</b></td><td class="num">${r.com_tempo ? fmtMin(r.min_total) : '—'}</td><td class="num tempo" title="${r.com_tempo} atendimento(s) com início e término">${fmtMin(r.min_medio)}</td><td class="num col-tent">${r.tent_com_tempo ? fmtMin(r.tent_min_total) : '—'}</td><td class="num col-tent tempo-tent" title="${r.tent_com_tempo} tentativa(s) com início e término">${fmtMin(r.tent_min_medio)}</td></tr>`;
     const maxD = Math.max(1, ...p.destinos.map(d => d.n)), maxC = Math.max(1, ...p.porComarca.map(d => d.n));
     $('#pn').innerHTML = `
       <div class="filtro-tec">
@@ -582,30 +593,34 @@ async function telaPainel(main) {
       </div>
       <div class="kpis">
         <div class="kpi enc"><span>Encaminhado</span><b>${T.encaminhado}</b></div>
-        <div class="kpi tent"><span>Tent. contato</span><b>${T.tent_contato}</b></div>
+        <div class="kpi tent" title="Tentativas de contato não contam como chamado atendido"><span>Tent. contato</span><b>${T.tent_contato}</b><small class="fora">fora do total</small></div>
         <div class="kpi ag"><span>Agendado</span><b>${T.agendado}</b></div>
         <div class="kpi fech"><span>Fechado</span><b>${T.fechado}</b></div>
         <div class="kpi tot"><span>Total geral</span><b>${T.total}</b></div>
         <div class="kpi"><span>Média diária</span><b>${String(media).replace('.', ',')}</b></div>
         <div class="kpi"><span>Tempo médio</span><b>${fmtMin(T.min_medio)}</b></div>
+        <div class="kpi tent" title="Tempo médio de cada tentativa de contato (início até término)"><span>Média por tentativa</span><b>${fmtMin(T.tent_min_medio)}</b><small class="fora">${T.tent_com_tempo ? fmtMin(T.tent_min_total) + ' em tentativas' : 'sem tentativas com horário'}</small></div>
       </div>
-      <div class="grid2">
-        <div class="card"><h3>Por técnico</h3><div class="tablewrap"><table>
-          <thead><tr><th>Técnico</th><th class="num">Encaminhado</th><th class="num">Tent. contato</th><th class="num">Agendado</th><th class="num">Fechado</th><th class="num">Remoto/Home</th><th class="num">Local</th><th class="num">Total geral</th><th class="num">Horas totais</th><th class="num">Tempo médio</th></tr></thead>
+      <div class="card"><h3>Por técnico</h3><div class="tablewrap"><table>
+          <thead><tr><th>Técnico</th><th class="num">Encaminhado</th><th class="num" title="Não conta no total">Tent. contato*</th><th class="num">Agendado</th><th class="num">Fechado</th><th class="num">Remoto/Home</th><th class="num">Local</th><th class="num">Total geral</th><th class="num">Horas totais</th><th class="num">Tempo médio</th><th class="num col-tent">Horas em tent.</th><th class="num col-tent">Média por tent.</th></tr></thead>
           <tbody>${geral.linhas.map(r => linha(r)).join('')}${linha(geral.total, true)}</tbody></table></div>
-          <div class="pad hint">Média diária = total geral ÷ ${p.diasUteis} dias úteis ${p.mes === mesAtual() ? 'até hoje' : 'do mês'}.
+          <div class="pad hint"><b>Tentativa de contato não conta como chamado atendido</b>: aparece na coluna própria, mas fica fora do total geral, das horas, do tempo médio, dos gráficos e do calendário.<br>Média diária = total geral ÷ ${p.diasUteis} dias úteis ${p.mes === mesAtual() ? 'até hoje' : 'do mês'}.
             Tempo médio = horas de atendimento ÷ atendimentos com início e término preenchidos.</div></div>
-        <div style="display:grid;gap:14px;align-content:start">
+      <div class="graficos">
           <div class="card"><h3>Atendimento SAJ — encaminhados para${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ''}</h3><div class="pad bars">${p.destinos.map(d => `<div class="bar"><span>${esc(d.destino)}</span><div class="t"><i style="width:${d.n / maxD * 100}%"></i></div><b>${d.n}</b></div>`).join('')}</div></div>
           <div class="card"><h3>Comarcas com mais atendimentos${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ''}</h3><div class="pad bars">${p.porComarca.length ? p.porComarca.map(d => `<div class="bar"><span title="${esc(d.comarca)}">${esc(d.comarca)}</span><div class="t"><i style="width:${d.n / maxC * 100}%"></i></div><b>${d.n}</b></div>`).join('') : '<div class="muted">Sem dados no mês.</div>'}</div></div>
-        </div>
       </div>
       <div class="card cal-card">
         <div class="cal-head"><h3>Calendário de ${esc(nomeMes(S.mes))}${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ' <span class="muted">· todos os técnicos</span>'}</h3>
           <select id="calTec" aria-label="Técnico"><option value="">Todos os técnicos</option>${geral.linhas.map(r => `<option value="${esc(r.uid)}" ${r.uid === uid ? 'selected' : ''}>${esc(r.nome)}</option>`).join('')}</select></div>
         <div class="pad" id="cal"></div>
+      </div>
+      <div class="card cal-card">
+        <h3>Tentativas de contato por dia${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ' <span class="muted">· todos os técnicos</span>'}</h3>
+        <div class="tablewrap" id="tentDia"></div>
       </div>`;
     calendario($('#cal'), doSel, '');
+    tentativasPorDia($('#tentDia'), doSel, !uid);
     const escolher = v => { S.painelTec = v; desenhar(); };
     $('#pTec').onchange = e => escolher(e.target.value);
     $('#calTec').onchange = e => escolher(e.target.value);
@@ -621,30 +636,60 @@ function calendario(el, lista, uid) {
   const dias = new Date(y, m, 0).getDate(), inicioSem = new Date(y, m - 1, 1).getDay();
   const doMes = uid ? lista.filter(a => a.uid === uid) : lista;
   const porDia = {}; doMes.forEach(a => { const d = Number((a.data_ref || '').slice(8, 10)); if (d) (porDia[d] = porDia[d] || []).push(a); });
-  const max = Math.max(1, ...Object.values(porDia).map(l => l.length));
+  const max = Math.max(1, ...Object.values(porDia).map(l => l.filter(contaComoAtendido).length));
   const hoje = hojeISO();
   let html = '<div class="cal">' + ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => `<div class="cal-sem">${d}</div>`).join('');
   for (let i = 0; i < inicioSem; i++) html += '<div class="cal-dia vazio"></div>';
   for (let d = 1; d <= dias; d++) {
-    const l = porDia[d] || [], n = l.length, w = new Date(y, m - 1, d).getDay();
+    const l = porDia[d] || [], n = l.filter(contaComoAtendido).length, tent = l.length - n, w = new Date(y, m - 1, d).getDay();
     const iso = `${S.mes}-${String(d).padStart(2, '0')}`;
-    const fech = l.filter(a => a.status === 'FECHADO').length, min = l.map(minutosDe).filter(x => x !== null).reduce((t, x) => t + x, 0);
+    const fech = l.filter(a => a.status === 'FECHADO').length, min = l.filter(contaComoAtendido).map(minutosDe).filter(x => x !== null).reduce((t, x) => t + x, 0);
     const alpha = n ? 0.12 + 0.55 * (n / max) : 0;
-    html += `<button type="button" class="cal-dia ${w === 0 || w === 6 ? 'fds' : ''} ${iso === hoje ? 'hoje' : ''} ${n ? 'tem' : ''}" data-dia="${d}"
-      style="${n ? `background:rgba(44,82,130,${alpha.toFixed(2)});${alpha > .45 ? 'color:#fff' : ''}` : ''}" ${n ? '' : 'disabled'}
-      title="${n ? `${n} atendimento(s) · ${fech} fechado(s)${min ? ' · ' + fmtMin(min) : ''}` : 'Sem atendimentos'}">
-      <span class="cal-n">${d}</span>${n ? `<b>${n}</b><small>${n === 1 ? 'atendimento' : 'atendimentos'}</small>` : ''}</button>`;
+    html += `<button type="button" class="cal-dia ${w === 0 || w === 6 ? 'fds' : ''} ${iso === hoje ? 'hoje' : ''} ${l.length ? 'tem' : ''}" data-dia="${d}"
+      style="${n ? `background:rgba(44,82,130,${alpha.toFixed(2)});${alpha > .45 ? 'color:#fff' : ''}` : ''}" ${l.length ? '' : 'disabled'}
+      title="${l.length ? `${n} atendimento(s) · ${fech} fechado(s)${min ? ' · ' + fmtMin(min) : ''}${tent ? ` · ${tent} tentativa(s) de contato (fora do total)` : ''}` : 'Sem atendimentos'}">
+      <span class="cal-n">${d}</span>${tent ? `<span class="cal-tent">+${tent} tent.</span>` : ''}${n ? `<b>${n}</b><small>${n === 1 ? 'atendimento' : 'atendimentos'}</small>` : ''}</button>`;
   }
-  html += '</div><div class="hint" style="margin-top:10px">Clique em um dia para ver os atendimentos. Quanto mais escuro, mais atendimentos no dia.</div>';
+  html += '</div><div class="hint" style="margin-top:10px">Clique em um dia para ver os atendimentos. Quanto mais escuro, mais atendimentos no dia. "+1 tent." = tentativas de contato, que não entram na contagem.</div>';
   el.innerHTML = html;
   $$('.cal-dia.tem', el).forEach(b => b.onclick = () => diaDetalhe(Number(b.dataset.dia), porDia[b.dataset.dia]));
 }
+// quadro diário das tentativas de contato: quantidade, horas e média por dia
+function tentativasPorDia(el, lista, mostrarTec) {
+  const tent = lista.filter(a => !contaComoAtendido(a));
+  if (!tent.length) { el.innerHTML = '<div class="empty" style="padding:24px">Nenhuma tentativa de contato neste mês.</div>'; return; }
+  const dias = {};
+  tent.forEach(a => { const k = (a.data_ref || '').slice(0, 10); (dias[k] = dias[k] || []).push(a); });
+  const semana = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+  const linhas = Object.keys(dias).sort().map(k => {
+    const l = dias[k], r = {}; temposTent(r, l);
+    let tecs = '';
+    if (mostrarTec) {
+      const por = {}; l.forEach(a => { (por[a.uid] = por[a.uid] || []).push(a); });
+      tecs = Object.entries(por).map(([u, la]) => { const t = {}; temposTent(t, la); return `${esc(nomeDe(u, la[0].tecnico))} <span class="muted">${la.length}${t.tent_com_tempo ? ' · ' + fmtMin(t.tent_min_medio) : ''}</span>`; }).join(' · ');
+    }
+    const [yy, mm, dd] = k.split('-');
+    return `<tr class="click" data-dia="${Number(dd)}"><td><b>${dd}/${mm}</b> <span class="muted">${semana[new Date(+yy, mm - 1, +dd).getDay()]}</span></td>
+      <td class="num">${l.length}</td><td class="num">${r.tent_com_tempo ? fmtMin(r.tent_min_total) : '—'}</td><td class="num tempo-tent">${fmtMin(r.tent_min_medio)}</td>${mostrarTec ? `<td class="wrap">${tecs}</td>` : ''}</tr>`;
+  });
+  const T = {}; temposTent(T, tent);
+  el.innerHTML = `<table><thead><tr><th>Dia</th><th class="num">Tentativas</th><th class="num">Horas</th><th class="num">Média por tentativa</th>${mostrarTec ? '<th>Por técnico (qtd · média)</th>' : ''}</tr></thead>
+    <tbody>${linhas.join('')}<tr class="total"><td>Mês</td><td class="num">${tent.length}</td><td class="num">${T.tent_com_tempo ? fmtMin(T.tent_min_total) : '—'}</td><td class="num">${fmtMin(T.tent_min_medio)}</td>${mostrarTec ? '<td></td>' : ''}</tr></tbody></table>
+    <div class="pad hint">Tempo de cada tentativa = do início ao término informados no registro. Clique em um dia para ver os registros.</div>`;
+  $$('tr[data-dia]', el).forEach(tr => tr.onclick = () => {
+    const d = Number(tr.dataset.dia);
+    diaDetalhe(d, lista.filter(a => Number((a.data_ref || '').slice(8, 10)) === d));
+  });
+}
+
 function diaDetalhe(d, l) {
   l = [...l].sort((a, b) => (a.inicio || '').localeCompare(b.inicio || ''));
   const data = `${String(d).padStart(2, '0')}/${S.mes.slice(5, 7)}/${S.mes.slice(0, 4)}`;
-  const min = l.map(minutosDe).filter(x => x !== null);
+  const min = l.filter(contaComoAtendido).map(minutosDe).filter(x => x !== null);
+  const nTent = l.filter(a => !contaComoAtendido(a)).length;
+  const tt = {}; temposTent(tt, l);
   const { fechar } = modal(`Atendimentos de ${data}`, `
-    <p class="hint" style="margin-top:0">${l.length} atendimento(s)${min.length ? ` · ${fmtMin(min.reduce((t, x) => t + x, 0))} de atendimento · média ${fmtMin(Math.round(min.reduce((t, x) => t + x, 0) / min.length))}` : ''}</p>
+    <p class="hint" style="margin-top:0">${l.length - nTent} atendimento(s)${nTent ? ` + ${nTent} tentativa(s) de contato (fora do total${tt.tent_com_tempo ? `: ${fmtMin(tt.tent_min_total)}, média ${fmtMin(tt.tent_min_medio)}` : ''})` : ''}${min.length ? ` · ${fmtMin(min.reduce((t, x) => t + x, 0))} de atendimento · média ${fmtMin(Math.round(min.reduce((t, x) => t + x, 0) / min.length))}` : ''}</p>
     <div class="tablewrap"><table><thead><tr><th>Início</th><th>SMAX</th><th>Comarca</th><th>Técnico</th><th class="num">Tempo</th><th>Status</th></tr></thead><tbody>
     ${l.map(a => `<tr class="click" data-id="${esc(a.id)}"><td>${esc((a.inicio || '').slice(11, 16))}</td><td class="mono"><b>${esc(a.smax)}</b></td><td>${esc(a.comarca)}</td><td>${esc(nomeDe(a.uid, a.tecnico))}</td><td class="num">${duracao(a.inicio, a.termino)}</td><td>${chip(a.status)}</td></tr>`).join('')}
     </tbody></table></div>`, [{ t: 'Fechar', primary: true }], '', ov => {
@@ -670,20 +715,35 @@ async function exportarExcel() {
   const [yy, mm] = S.mes.split('-').map(Number);
   ws.getCell('B2').value = new Date(Date.UTC(yy, mm - 1, 1)); ws.getCell('B2').numFmt = 'mmm/yyyy';
   ws.getCell('E2').value = `Gerado em ${new Date().toLocaleString('pt-BR')}`;
-  ['TÉCNICO', 'ENCAMINHADO', 'TENT CONTATO', 'AGENDADO', 'FECHADO', 'REMOTO/HOME', 'LOCAL', 'TOTAL GERAL', 'HORAS TOTAIS', 'TEMPO MÉDIO'].forEach((h, i) => { const c = ws.getCell(3, 2 + i); c.value = h; cab(c); });
+  ['TÉCNICO', 'ENCAMINHADO', 'TENT CONTATO', 'AGENDADO', 'FECHADO', 'REMOTO/HOME', 'LOCAL', 'TOTAL GERAL (sem tent. contato)', 'HORAS TOTAIS', 'TEMPO MÉDIO', 'HORAS EM TENT.', 'MÉDIA POR TENT.'].forEach((h, i) => { const c = ws.getCell(3, 2 + i); c.value = h; cab(c); });
   [...p.linhas, p.total].forEach((r, i) => {
     [r.nome, r.encaminhado, r.tent_contato, r.agendado, r.fechado, r.home, r.local, r.total,
-      r.com_tempo ? r.min_total / 1440 : '', r.min_medio !== null ? r.min_medio / 1440 : ''].forEach((v, j) => {
+      r.com_tempo ? r.min_total / 1440 : '', r.min_medio !== null ? r.min_medio / 1440 : '',
+      r.tent_com_tempo ? r.tent_min_total / 1440 : '', r.tent_min_medio !== null ? r.tent_min_medio / 1440 : ''].forEach((v, j) => {
       const c = ws.getCell(4 + i, 2 + j); c.value = v; c.border = borda; if (j) c.alignment = { horizontal: 'center' };
       if (j >= 8 && v !== '') c.numFmt = '[h]:mm';
       if (r === p.total) { c.font = { bold: true }; c.fill = cinza; }
     });
   });
-  ws.getCell('M3').value = 'MÉDIA DIÁRIA'; cab(ws.getCell('M3')); ws.getCell('N3').value = p.mediaDiaria; ws.getCell('N3').border = borda;
-  ws.getCell('M4').value = `(${p.diasUteis} dias úteis)`; ws.getCell('M4').font = { italic: true, size: 9 };
-  ws.getCell('P3').value = 'ATENDIMENTO SAJ'; cab(ws.getCell('P3')); ws.getCell('Q3').value = 'QTD'; cab(ws.getCell('Q3'));
-  p.destinos.forEach((d, i) => { ws.getCell(4 + i, 16).value = d.destino; ws.getCell(4 + i, 17).value = d.n; ws.getCell(4 + i, 16).border = borda; ws.getCell(4 + i, 17).border = borda; });
-  ws.getColumn(2).width = 18; for (let c = 3; c <= 11; c++) ws.getColumn(c).width = 14; ws.getColumn(13).width = 14; ws.getColumn(16).width = 18;
+  ws.getCell('O3').value = 'MÉDIA DIÁRIA'; cab(ws.getCell('O3')); ws.getCell('P3').value = p.mediaDiaria; ws.getCell('P3').border = borda;
+  ws.getCell('O4').value = `(${p.diasUteis} dias úteis)`; ws.getCell('O4').font = { italic: true, size: 9 };
+  ws.getCell('R3').value = 'ATENDIMENTO SAJ'; cab(ws.getCell('R3')); ws.getCell('S3').value = 'QTD'; cab(ws.getCell('S3'));
+  p.destinos.forEach((d, i) => { ws.getCell(4 + i, 18).value = d.destino; ws.getCell(4 + i, 19).value = d.n; ws.getCell(4 + i, 18).border = borda; ws.getCell(4 + i, 19).border = borda; });
+  ws.getColumn(2).width = 18; for (let c = 3; c <= 13; c++) ws.getColumn(c).width = 14; ws.getColumn(15).width = 14; ws.getColumn(18).width = 18;
+
+  // aba com as tentativas de contato por dia e por técnico
+  const wt = wb.addWorksheet('TENTATIVAS POR DIA');
+  ['DATA', 'TÉCNICO', 'TENTATIVAS', 'HORAS', 'MÉDIA POR TENTATIVA'].forEach((h, i) => { const c = wt.getCell(1, 1 + i); c.value = h; cab(c); });
+  const grupos = {};
+  lista.filter(a => !contaComoAtendido(a)).forEach(a => { const k = (a.data_ref || '') + '|' + a.uid; (grupos[k] = grupos[k] || []).push(a); });
+  Object.keys(grupos).sort().forEach((k, i) => {
+    const [d, uid] = k.split('|'), g = grupos[k], t = {}; temposTent(t, g);
+    const [y2, m2, d2] = d.split('-').map(Number);
+    const row = [new Date(Date.UTC(y2, m2 - 1, d2)), nomeDe(uid, g[0].tecnico), g.length, t.tent_com_tempo ? t.tent_min_total / 1440 : '', t.tent_min_medio !== null ? t.tent_min_medio / 1440 : ''];
+    row.forEach((v, j) => { const c = wt.getCell(2 + i, 1 + j); c.value = v; c.border = borda; if (j === 0) c.numFmt = 'dd/mm/yyyy'; if (j >= 3 && v !== '') c.numFmt = '[h]:mm'; });
+  });
+  [14, 20, 12, 12, 20].forEach((wd, i) => wt.getColumn(i + 1).width = wd);
+  wt.views = [{ state: 'frozen', ySplit: 1 }];
 
   const usados = new Set();
   for (const lin of p.linhas) {
@@ -706,8 +766,8 @@ async function exportarExcel() {
       for (let c = 1; c <= 11; c++) w.getCell(r, c).border = borda;
     });
     w.getCell('P2').value = 'TOTAIS'; cab(w.getCell('P2')); cab(w.getCell('Q2'));
-    [['ENCAMINHADO', lin.encaminhado], ['TENT CONTATO', lin.tent_contato], ['AGENDADO', lin.agendado], ['FECHADO', lin.fechado], ['HOME', lin.home], ['LOCAL', lin.local], ['TOTAL', lin.total]]
-      .forEach(([k, v], i) => { const a = w.getCell(3 + i, 16), b = w.getCell(3 + i, 17); a.value = k; b.value = v; a.border = b.border = borda; if (k === 'TOTAL') a.font = b.font = { bold: true }; });
+    [['ENCAMINHADO', lin.encaminhado], ['TENT CONTATO', lin.tent_contato], ['AGENDADO', lin.agendado], ['FECHADO', lin.fechado], ['HOME', lin.home], ['LOCAL', lin.local], ['TOTAL (sem tent. contato)', lin.total]]
+      .forEach(([k, v], i) => { const a = w.getCell(3 + i, 16), b = w.getCell(3 + i, 17); a.value = k; b.value = v; a.border = b.border = borda; if (k.startsWith('TOTAL')) a.font = b.font = { bold: true }; });
     w.getCell('S1').value = 'Agendamento'; w.getCell('S1').font = { bold: true };
     ['Horário', 'SMAX', 'Usuário', 'Obs'].forEach((h, i) => { const c = w.getCell(2, 19 + i); c.value = h; cab(c); });
     meus.filter(a => a.status === 'AGENDADO').forEach((a, i) => {
