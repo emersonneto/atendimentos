@@ -96,6 +96,17 @@ export const api = {
   }),
   // usado para não deixar registrar o mesmo chamado SMAX duas vezes
   buscarPorSmax: tentar(async smax => lista(await getDocs(query(col('atendimentos'), where('smax', '==', String(smax).trim()))))),
+  // todos os atendimentos de um técnico (qualquer mês) — usado ao desligar alguém
+  listarPorTecnico: tentar(async uid => lista(await getDocs(query(col('atendimentos'), where('uid', '==', uid))))),
+  // passa chamados para outro técnico (só o líder consegue, pelas regras)
+  transferirAtendimentos: tentar(async itens => {
+    for (let i = 0; i < itens.length; i += 400) {
+      const b = writeBatch(db);
+      for (const { id, uid, tecnico, historico } of itens.slice(i, i + 400))
+        b.update(doc(db, 'atendimentos', id), { uid, tecnico, historico, atualizado_em: serverTimestamp() });
+      await b.commit();
+    }
+  }),
   listarAgendados: tentar(async ({ uid }) => {
     const f = [where('status', '==', 'AGENDADO')];
     if (uid) f.push(where('uid', '==', uid));

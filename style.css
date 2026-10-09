@@ -255,3 +255,13 @@ table.tab-tec th{white-space:normal;line-height:1.2;vertical-align:bottom;paddin
 table.tab-tec td{padding:9px 8px}
 .cal-dia.escolhido{outline:3px solid var(--brand);outline-offset:1px}
 .filtro-tec select#pDia{min-width:170px}
+/* desligar da equipe */
+details.desligados{margin-top:16px}
+details.desligados summary{cursor:pointer;padding:12px 14px;font-weight:700;font-size:14px;color:var(--ink-2)}
+details.desligados[open] summary{border-bottom:1px solid var(--line-2)}
+.tag-deslig{display:inline-block;margin-left:6px;padding:0 6px;border-radius:5px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;background:var(--line-2);color:var(--ink-3);vertical-align:1px}
+.lista-ok{margin:0 0 12px;padding-left:18px;font-size:13.5px;color:var(--ink-2)}
+.lista-ok li{margin-bottom:4px}
+.aviso-abertos{background:var(--st-tent-bg);border:1px solid #f3d9a8;border-radius:10px;padding:12px;font-size:13.5px}
+.lista-abertos{margin-top:8px;font-size:12.5px;color:var(--ink-2);display:grid;gap:2px}
+.nowrap{white-space:nowrap}

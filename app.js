@@ -181,6 +181,7 @@ async function render() {
   if (!emailDaEmpresa(S.conta.email)) return telaBloqueio('Conta sem acesso', `Você entrou como <b>${esc(S.conta.email)}</b>. Só e-mails ${api.DOMINIOS.map(d => '@' + d).join(' ou ')} têm acesso.`);
   if (!S.conta.verificado) return telaVerificar();
   if (!S.perfil) return telaBloqueio('Não foi possível carregar seu acesso', S.erroPerfil || 'Tente sair e entrar de novo.');
+  if (S.perfil.desligado) return telaBloqueio('Acesso encerrado', 'Sua conta foi desligada da equipe. Se isso for um engano, fale com o líder.');
   if (!S.perfil.ativo) return telaBloqueio('Aguardando liberação', `Sua conta (${esc(S.conta.email)}) foi criada. Avise o líder da equipe para liberar seu acesso em <b>Usuários</b>. Depois é só recarregar esta página.`, true);
   if (!S.usuarios) { try { S.usuarios = await api.listarUsuarios(); } catch (e) { toast(e.message, true); S.usuarios = [S.perfil]; } }
   const r = rota();
@@ -279,7 +280,7 @@ function telaBloqueio(titulo, msg, recarregar) {
 function layout(r) {
   const tabs = [['atendimentos', isAdmin() ? 'Atendimentos' : 'Meus atendimentos'], ['agenda', 'Agenda'], ['painel', 'Painel']];
   if (isAdmin()) {
-    const pend = S.usuarios.filter(u => !u.ativo && !u.bloqueado).length;
+    const pend = S.usuarios.filter(u => !u.ativo && !u.bloqueado && !u.desligado).length;
     tabs.push(['usuarios', `Usuários${pend ? ` <span class="badge">${pend}</span>` : ''}`]);
   }
   const atual = tabs.some(x => x[0] === r) ? r : 'atendimentos';
@@ -422,13 +423,15 @@ async function telaAtendimentos(main) {
         <td>${esc(a.comarca)}</td><td>${fmtDH(a.inicio)}</td><td>${fmtDH(a.termino)}</td>
         <td class="num">${duracao(a.inicio, a.termino)}</td><td class="mono">${esc(a.ticket_softplan)}</td>
         <td>${chip(a.status)}</td><td>${a.encaminhado_para ? `<span class="tag">${esc(a.encaminhado_para)}</span>` : ''}</td>
-        <td>${esc(a.home_local)}</td>${mostraTec ? `<td>${esc(nomeDe(a.uid, a.tecnico))}</td>` : ''}
+        <td>${esc(a.home_local)}</td>${mostraTec ? `<td>${esc(nomeDe(a.uid, a.tecnico))}${marcaDesligado(a.uid)}</td>` : ''}
       </tr>`).join('')}</tbody></table>`;
     $$('#tab tr[data-id]').forEach(tr => tr.onclick = () => formAtendimento(lista.find(a => a.id === tr.dataset.id)));
   }
   S.recarregar = carregar;
   carregar();
 }
+const desligado = uid => !!((S.usuarios || []).find(x => x.id === uid) || {}).desligado;
+const marcaDesligado = uid => desligado(uid) ? ' <span class="tag-deslig">desligado</span>' : '';
 function nomeDe(uid, reserva) { const u = (S.usuarios || []).find(x => x.id === uid); return u ? u.nome : (reserva || '—'); }
 
 function formAtendimento(a) {
@@ -659,12 +662,12 @@ async function telaPainel(main) {
     }
     const filtros = [uid ? `<b>${esc(sel.nome)}</b>` : '', dia ? `<b>${fmtData(dia)}</b>` : ''].filter(Boolean).join(' · ');
     const linha = (r, tot) => `<tr class="${tot ? 'total' : ''} click ${!tot && r.uid === uid ? 'sel' : ''} ${uid && !tot && r.uid !== uid ? 'apagado' : ''}" data-uid="${tot ? '' : esc(r.uid)}" title="${tot ? 'Ver todos os técnicos' : 'Ver só ' + esc(r.nome)}">
-      <td>${esc(r.nome)}</td><td class="num">${r.encaminhado}</td><td class="num">${r.tent_contato}</td><td class="num">${r.agendado}</td><td class="num">${r.fechado}</td><td class="num">${r.home}</td><td class="num">${r.local}</td><td class="num"><b>${r.total}</b></td><td class="num">${r.com_tempo ? fmtMin(r.min_total) : '—'}</td><td class="num tempo" title="${r.com_tempo} atendimento(s) com início e término">${fmtMin(r.min_medio)}</td><td class="num col-tent">${r.tent_com_tempo ? fmtMin(r.tent_min_total) : '—'}</td><td class="num col-tent tempo-tent" title="${r.tent_com_tempo} tentativa(s) com início e término">${fmtMin(r.tent_min_medio)}</td></tr>`;
+      <td>${esc(r.nome)}${tot ? '' : marcaDesligado(r.uid)}</td><td class="num">${r.encaminhado}</td><td class="num">${r.tent_contato}</td><td class="num">${r.agendado}</td><td class="num">${r.fechado}</td><td class="num">${r.home}</td><td class="num">${r.local}</td><td class="num"><b>${r.total}</b></td><td class="num">${r.com_tempo ? fmtMin(r.min_total) : '—'}</td><td class="num tempo" title="${r.com_tempo} atendimento(s) com início e término">${fmtMin(r.min_medio)}</td><td class="num col-tent">${r.tent_com_tempo ? fmtMin(r.tent_min_total) : '—'}</td><td class="num col-tent tempo-tent" title="${r.tent_com_tempo} tentativa(s) com início e término">${fmtMin(r.tent_min_medio)}</td></tr>`;
     const maxD = Math.max(1, ...p.destinos.map(d => d.n)), maxC = Math.max(1, ...p.porComarca.map(d => d.n));
     $('#pn').innerHTML = `
       <div class="filtro-tec">
         <label>Técnico:
-          <select id="pTec"><option value="">Todos os técnicos</option>${mesGeral.linhas.map(r => `<option value="${esc(r.uid)}" ${r.uid === uid ? 'selected' : ''}>${esc(r.nome)}</option>`).join('')}</select></label>
+          <select id="pTec"><option value="">Todos os técnicos</option>${mesGeral.linhas.map(r => `<option value="${esc(r.uid)}" ${r.uid === uid ? 'selected' : ''}>${esc(r.nome)}${desligado(r.uid) ? ' (desligado)' : ''}</option>`).join('')}</select></label>
         <label>Dia:
           <select id="pDia">${opcDias}</select></label>
         ${S.mes === mesAtual() ? '<button type="button" class="btn" id="pHoje">Hoje</button>' : ''}
@@ -692,7 +695,7 @@ async function telaPainel(main) {
       </div>
       <div class="card cal-card">
         <div class="cal-head"><h3>Calendário de ${esc(nomeMes(S.mes))}${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ' <span class="muted">· todos os técnicos</span>'}</h3>
-          <select id="calTec" aria-label="Técnico"><option value="">Todos os técnicos</option>${mesGeral.linhas.map(r => `<option value="${esc(r.uid)}" ${r.uid === uid ? 'selected' : ''}>${esc(r.nome)}</option>`).join('')}</select></div>
+          <select id="calTec" aria-label="Técnico"><option value="">Todos os técnicos</option>${mesGeral.linhas.map(r => `<option value="${esc(r.uid)}" ${r.uid === uid ? 'selected' : ''}>${esc(r.nome)}${desligado(r.uid) ? ' (desligado)' : ''}</option>`).join('')}</select></div>
         <div class="pad" id="cal"></div>
       </div>
       <div class="card cal-card">
@@ -876,7 +879,8 @@ async function exportarExcel() {
 async function telaUsuarios(main) {
   S.recarregar = null;
   try { S.usuarios = await api.listarUsuarios(); } catch (e) { toast(e.message, true); }
-  const lista = [...S.usuarios].sort((a, b) => (a.ativo - b.ativo) || a.nome.localeCompare(b.nome));
+  const lista = S.usuarios.filter(u => !u.desligado).sort((a, b) => (a.ativo - b.ativo) || a.nome.localeCompare(b.nome));
+  const deslig = S.usuarios.filter(u => u.desligado).sort((a, b) => (b.desligado_em || '').localeCompare(a.desligado_em || ''));
   const link = location.href.split('#')[0];
   main.innerHTML = `<div class="head"><div><h2>Usuários</h2>
       <p>Para entrar alguém novo: mande o link do sistema, a pessoa cria a conta com o e-mail ${api.DOMINIOS.map(d => '@' + esc(d)).join(' ou ')} e você libera aqui.</p></div>
@@ -889,9 +893,17 @@ async function telaUsuarios(main) {
       <td><b>${esc(u.nome)}</b>${eu ? ' <span class="muted">(você)</span>' : ''}</td><td>${esc(u.email)}</td>
       <td><select data-acao="perfil" ${eu ? 'disabled' : ''} style="width:auto;height:30px"><option value="tecnico" ${u.perfil === 'tecnico' ? 'selected' : ''}>Técnico</option><option value="admin" ${u.perfil === 'admin' ? 'selected' : ''}>Líder / admin</option></select></td>
       <td>${situacao}</td>
-      <td style="text-align:right">${eu ? '' : (u.ativo ? '<button class="btn sm danger" data-acao="bloquear">Bloquear</button>' : '<button class="btn sm primary" data-acao="liberar">Liberar acesso</button>')}</td></tr>`;
+      <td style="text-align:right;white-space:nowrap">${eu ? '' : `${u.ativo ? '<button class="btn sm" data-acao="bloquear">Bloquear</button>' : '<button class="btn sm primary" data-acao="liberar">Liberar acesso</button>'}
+        <button class="btn sm danger" data-acao="desligar">Desligar da equipe</button>`}</td></tr>`;
     }).join('')}</tbody></table></div></div>
-    <p class="hint" style="margin-top:12px">Esqueceu a senha? A própria pessoa usa "Esqueci minha senha" na tela de login. Bloquear tira o acesso na hora, mas mantém os atendimentos registrados.</p>
+    <p class="hint" style="margin-top:12px"><b>Bloquear</b> = pausa temporária (férias, afastamento): a pessoa não entra, mas continua aparecendo nas telas.
+      <b>Desligar</b> = saiu da equipe: não entra e some das telas, mas todos os atendimentos dela continuam guardados e contando nos meses em que trabalhou.</p>
+    ${deslig.length ? `<details class="card desligados"><summary>Desligados (${deslig.length})</summary><div class="tablewrap"><table>
+      <thead><tr><th>Nome</th><th>E-mail</th><th>Desligado em</th><th>Por</th><th></th></tr></thead><tbody>
+      ${deslig.map(u => `<tr data-id="${esc(u.id)}"><td><b>${esc(u.nome)}</b></td><td>${esc(u.email)}</td><td>${fmtData(u.desligado_em)} ${esc((u.desligado_em || '').slice(11, 16))}</td><td>${esc(u.desligado_por || '')}</td>
+        <td style="text-align:right"><button class="btn sm" data-acao="reativar">Reativar</button></td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="pad hint">Para liberar o e-mail de vez, apague a conta em Firebase → Authentication → Usuários. Os atendimentos não são afetados.</div></details>` : ''}
     <input type="file" id="arq" accept=".xlsx" hidden>`;
   $('#cop').onclick = async () => {
     const msg = `Acesse o sistema de atendimentos: ${link}\nClique em "Primeiro acesso? Criar conta", use seu e-mail da empresa e confirme pelo link que chega no Outlook. Depois me avise que eu libero seu acesso.`;
@@ -900,12 +912,55 @@ async function telaUsuarios(main) {
   $('#imp').onclick = () => $('#arq').click();
   $('#arq').onchange = importar;
   $$('tr[data-id]', main).forEach(tr => {
-    const u = lista.find(x => x.id === tr.dataset.id);
+    const u = S.usuarios.find(x => x.id === tr.dataset.id);
     const mudar = async (dados, msg) => { try { await api.atualizarUsuario(u.id, dados); toast(msg); S.usuarios = null; render(); } catch (e) { toast(e.message, true); } };
-    const pf = $('[data-acao=perfil]', tr); pf.onchange = () => mudar({ perfil: pf.value }, 'Perfil atualizado.');
+    const pf = $('[data-acao=perfil]', tr); if (pf) pf.onchange = () => mudar({ perfil: pf.value }, 'Perfil atualizado.');
     const lib = $('[data-acao=liberar]', tr); if (lib) lib.onclick = () => mudar({ ativo: true, bloqueado: false }, `${u.nome} liberado.`);
     const blq = $('[data-acao=bloquear]', tr); if (blq) blq.onclick = () => confirm(`Bloquear ${u.nome}? Ele não conseguirá mais acessar.`) && mudar({ ativo: false, bloqueado: true }, `${u.nome} bloqueado.`);
+    const des = $('[data-acao=desligar]', tr); if (des) des.onclick = () => desligarUsuario(u);
+    const rea = $('[data-acao=reativar]', tr); if (rea) rea.onclick = () => confirm(`Reativar ${u.nome}? Ele volta a aparecer na equipe e pode entrar no sistema.`) &&
+      mudar({ ativo: true, bloqueado: false, desligado: false, desligado_em: '', desligado_por: '' }, `${u.nome} reativado.`);
   });
+}
+
+// desligar da equipe: tira o acesso e esconde das telas, mantendo os atendimentos.
+// Chamados em aberto podem ser transferidos para outro técnico.
+const ABERTOS = ['AGENDADO', 'TENT CONTATO', 'ENCAMINHADO'];
+async function desligarUsuario(u) {
+  let todos;
+  try { todos = await api.listarPorTecnico(u.id); } catch (e) { return toast(e.message, true); }
+  const abertos = todos.filter(a => ABERTOS.includes(a.status));
+  const destinos = S.usuarios.filter(x => x.ativo && !x.desligado && x.id !== u.id).sort((a, b) => a.nome.localeCompare(b.nome));
+  modal(`Desligar ${esc(u.nome)} da equipe`, `<form novalidate><div id="e"></div>
+    <p style="margin-top:0">${esc(u.nome)} vai <b>perder o acesso</b> e <b>sair das listas e seletores</b> do sistema.</p>
+    <ul class="lista-ok">
+      <li><b>${todos.length}</b> atendimento(s) registrados por ele continuam guardados, no Painel dos meses em que trabalhou e no Excel.</li>
+      <li>Dá para desfazer depois em <b>Usuários → Desligados → Reativar</b>.</li>
+    </ul>
+    ${abertos.length ? `<div class="aviso-abertos">
+      <b>${abertos.length} chamado(s) ainda em aberto</b> com ele:
+      ${ABERTOS.map(st => { const n = abertos.filter(a => a.status === st).length; return n ? `<span class="nowrap">${chip(st)} <b>${n}</b></span>` : ''; }).filter(Boolean).join(' · ')}
+      <div class="lista-abertos">${abertos.slice(0, 8).map(a => `<div>SMAX <b>${esc(a.smax)}</b> · ${esc(a.comarca)}${a.agendamento ? ' · agendado ' + fmtDH(a.agendamento) : ''}</div>`).join('')}${abertos.length > 8 ? `<div class="muted">… e mais ${abertos.length - 8}</div>` : ''}</div>
+      <label class="f" style="margin-top:10px"><span>Transferir os chamados em aberto para</span>
+        <select name="destino"><option value="">Não transferir (deixar no nome dele)</option>${destinos.map(d => `<option value="${esc(d.id)}">${esc(d.nome)}</option>`).join('')}</select></label>
+      <div class="hint">A transferência fica registrada no histórico de cada chamado. Chamados fechados continuam no nome dele.</div>
+    </div>` : '<p class="hint">Ele não tem chamados em aberto.</p>'}
+  </form>`, [{ t: 'Cancelar' }, { t: 'Desligar', danger: false, primary: true, fn: async ov => {
+    const destino = abertos.length ? $('select[name=destino]', ov).value : '';
+    try {
+      if (destino) {
+        const nomeDest = nomeDe(destino);
+        await api.transferirAtendimentos(abertos.map(a => ({
+          id: a.id, uid: destino, tecnico: nomeDest,
+          historico: [...(Array.isArray(a.historico) ? a.historico : []), { em: agoraLocal(), por: S.perfil.nome, de: a.status, para: a.status,
+            obs: `Transferido de ${u.nome} para ${nomeDest} (desligamento da equipe).` }].slice(-300),
+        })));
+      }
+      await api.atualizarUsuario(u.id, { ativo: false, bloqueado: false, desligado: true, desligado_em: agoraLocal(), desligado_por: S.perfil.nome });
+      toast(`${u.nome} desligado.${destino ? ` ${abertos.length} chamado(s) transferido(s) para ${nomeDe(destino)}.` : ''}`);
+      S.usuarios = null; render(); return true;
+    } catch (e) { erroBox($('#e', ov), e.message); return false; }
+  } }], 'sm');
 }
 
 async function idImportacao(uid, at) {
