@@ -104,6 +104,56 @@ function validar(at) {
   return null;
 }
 
+// --------------------------------------------------------------- campanha do mês (cores de conscientização)
+// claro: true = cor clara, usa texto escuro na barra do topo
+const CAMPANHAS = [
+  { mes: 'Janeiro', nome: 'Janeiro Branco', cor: '#eef1f5', claro: true, tema: 'Saúde mental',
+    texto: 'Mês de cuidar da saúde mental e emocional. Converse, peça ajuda e acolha quem precisa. Apoio emocional gratuito: CVV 188 (24h).' },
+  { mes: 'Fevereiro', nome: 'Fevereiro Roxo', cor: '#6b2fa0', tema: 'Lúpus, fibromialgia e Alzheimer',
+    texto: 'Conscientização sobre doenças crônicas sem cura, como lúpus, fibromialgia e Alzheimer. O diagnóstico precoce melhora a qualidade de vida.' },
+  { mes: 'Março', nome: 'Março Lilás', cor: '#8450b8', tema: 'Câncer de colo de útero',
+    texto: 'Prevenção ao câncer de colo do útero. O exame preventivo (Papanicolau) e a vacina contra o HPV salvam vidas.' },
+  { mes: 'Abril', nome: 'Abril Azul', cor: '#1f5fae', tema: 'Autismo',
+    texto: 'Conscientização sobre o Transtorno do Espectro Autista (TEA). Informação e respeito promovem inclusão.' },
+  { mes: 'Maio', nome: 'Maio Amarelo', cor: '#f5c518', claro: true, tema: 'Segurança no trânsito',
+    texto: 'Atenção pela vida no trânsito. No deslocamento entre comarcas: cinto, velocidade adequada e celular longe do volante.' },
+  { mes: 'Junho', nome: 'Junho Vermelho', cor: '#b3202a', tema: 'Doação de sangue',
+    texto: 'Incentivo à doação de sangue. Uma doação pode ajudar várias pessoas. Procure o hemocentro mais próximo.' },
+  { mes: 'Julho', nome: 'Julho Amarelo', cor: '#f5c518', claro: true, tema: 'Hepatites virais',
+    texto: 'Prevenção e diagnóstico das hepatites virais. Faça o teste e mantenha a vacinação em dia.' },
+  { mes: 'Agosto', nome: 'Agosto Dourado', cor: '#d4a72c', claro: true, tema: 'Aleitamento materno',
+    texto: 'Incentivo ao aleitamento materno, que protege a saúde do bebê e da mãe.' },
+  { mes: 'Setembro', nome: 'Setembro Amarelo', cor: '#f5c518', claro: true, tema: 'Prevenção ao suicídio',
+    texto: 'Falar é a melhor solução. Se você ou alguém próximo precisa de ajuda, ligue para o CVV 188 (gratuito, 24h) ou acesse cvv.org.br.' },
+  { mes: 'Outubro', nome: 'Outubro Rosa', cor: '#c2386f', tema: 'Câncer de mama',
+    texto: 'Prevenção e diagnóstico precoce do câncer de mama. Faça o autoexame e mantenha a mamografia em dia.' },
+  { mes: 'Novembro', nome: 'Novembro Azul', cor: '#1d4e89', tema: 'Saúde do homem',
+    texto: 'Cuidado com a saúde do homem e prevenção ao câncer de próstata. Consulte um médico regularmente.' },
+  { mes: 'Dezembro', nome: 'Dezembro Vermelho', cor: '#b3202a', tema: 'HIV/AIDS',
+    texto: 'Prevenção ao HIV/AIDS e outras ISTs. Faça o teste: é gratuito no SUS, e o tratamento também.' },
+];
+const campanhaAtual = () => CAMPANHAS[new Date().getMonth()];
+function seloCampanha() {
+  const c = campanhaAtual();
+  return `<div class="campanha">
+    <button type="button" class="campanha-btn" aria-expanded="false" title="${esc(c.nome)}: ${esc(c.tema)}">
+      <span class="laco" style="background:${c.cor}"></span>${esc(c.nome)}</button>
+    <div class="campanha-aviso" role="dialog" aria-label="${esc(c.nome)}">
+      <div class="campanha-topo" style="background:${c.cor};color:${c.claro ? '#1f2937' : '#fff'}">🎗 ${esc(c.nome)}</div>
+      <div class="campanha-corpo"><b>${esc(c.tema)}</b><p>${esc(c.texto)}</p></div>
+    </div></div>`;
+}
+function ligarCampanha(raiz = document) {
+  const box = $('.campanha', raiz); if (!box) return;
+  const btn = $('.campanha-btn', box);
+  btn.onclick = e => { e.stopPropagation(); const ab = box.classList.toggle('aberta'); btn.setAttribute('aria-expanded', ab); };
+  $('.campanha-aviso', box).onclick = e => e.stopPropagation();
+}
+// fecha o aviso ao clicar fora ou apertar Esc (um único ouvinte para a página toda)
+const fecharCampanha = () => $$('.campanha.aberta').forEach(b => { b.classList.remove('aberta'); $('.campanha-btn', b).setAttribute('aria-expanded', 'false'); });
+document.addEventListener('click', fecharCampanha);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharCampanha(); });
+
 // --------------------------------------------------------------- fluxo de login
 let iniciado = false;
 api.aoMudarLogin(async conta => {
@@ -140,7 +190,8 @@ async function render() {
 }
 
 function authShell(inner) {
-  app.innerHTML = `<div class="auth"><div class="auth-card"><div class="brandmark"><i></i>Atendimento Field</div>${inner}</div></div>`;
+  app.innerHTML = `<div class="auth"><div class="auth-card"><div class="auth-cab"><div class="brandmark"><i></i>Atendimento Field</div>${seloCampanha()}</div>${inner}</div></div>`;
+  ligarCampanha(app);
 }
 
 function telaAuth() {
@@ -230,8 +281,9 @@ function layout(r) {
   }
   const atual = tabs.some(x => x[0] === r) ? r : 'atendimentos';
   app.innerHTML = `
-  <header class="top"><div class="top-in">
+  <header class="top ${campanhaAtual().claro ? 'claro' : ''}" style="--top:${campanhaAtual().cor}"><div class="top-in">
     <div class="brandmark"><i></i><span>Atendimento Field</span></div>
+    ${seloCampanha()}
     <nav class="tabs">${tabs.map(([k, t]) => `<a href="#/${k}" class="${atual === k ? 'on' : ''}">${t}</a>`).join('')}</nav>
     <div class="me">
       <button id="meBtn" aria-haspopup="true"><span class="avatar">${esc(iniciais(S.perfil.nome))}</span><span class="nm">${esc(S.perfil.nome.split(' ')[0])}</span></button>
@@ -245,6 +297,7 @@ function layout(r) {
   <main></main>`;
   $('#meBtn').onclick = e => { e.stopPropagation(); $('#meMenu').classList.toggle('open'); };
   document.onclick = () => $('#meMenu') && $('#meMenu').classList.remove('open');
+  ligarCampanha($('header.top'));
   $('#mSair').onclick = () => api.sair();
   $('#mSenha').onclick = trocarSenha;
 }
