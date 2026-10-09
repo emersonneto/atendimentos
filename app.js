@@ -663,9 +663,10 @@ async function telaPainel(main) {
         <div class="kpi"><span>Tempo médio</span><b>${fmtMin(T.min_medio)}</b></div>
         <div class="kpi tent" title="Tempo médio de cada tentativa de contato (início até término)"><span>Média por tentativa</span><b>${fmtMin(T.tent_min_medio)}</b><small class="fora">${T.tent_com_tempo ? fmtMin(T.tent_min_total) + ' em tentativas' : 'sem tentativas com horário'}</small></div>
       </div>
-      <div class="card"><h3>Por técnico</h3><div class="tablewrap"><table>
+      <div class="card"><h3>Por técnico</h3><div class="tablewrap"><table class="tab-tec">
           <thead><tr><th>Técnico</th><th class="num">Encaminhado</th><th class="num" title="Não conta no total">Tent. contato*</th><th class="num">Agendado</th><th class="num">Fechado</th><th class="num">Remoto/Home</th><th class="num">Local</th><th class="num">Total geral</th><th class="num">Horas totais</th><th class="num">Tempo médio</th><th class="num col-tent">Horas em tent.</th><th class="num col-tent">Média por tent.</th></tr></thead>
-          <tbody>${geral.linhas.map(r => linha(r)).join('')}${linha(geral.total, true)}</tbody></table></div>
+          <tbody>${(uid ? geral.linhas.filter(r => r.uid === uid) : geral.linhas).map(r => linha(r)).join('')}${uid ? '' : linha(geral.total, true)}</tbody></table></div>
+          ${uid ? `<div class="pad hint" style="padding-bottom:0">Mostrando só ${esc(sel.nome)}. <a href="#" id="verTodos2">Ver todos os técnicos</a></div>` : ''}
           <div class="pad hint"><b>Tentativa de contato não conta como chamado atendido</b>: aparece na coluna própria, mas fica fora do total geral, das horas, do tempo médio, dos gráficos e do calendário.<br>Média diária = total geral ÷ ${p.diasUteis} dias úteis ${p.mes === mesAtual() ? 'até hoje' : 'do mês'}.
             Tempo médio = horas de atendimento ÷ atendimentos com início e término preenchidos.</div></div>
       <div class="graficos">
@@ -687,6 +688,7 @@ async function telaPainel(main) {
     $('#pTec').onchange = e => escolher(e.target.value);
     $('#calTec').onchange = e => escolher(e.target.value);
     if ($('#verTodos')) $('#verTodos').onclick = e => { e.preventDefault(); escolher(''); };
+    if ($('#verTodos2')) $('#verTodos2').onclick = e => { e.preventDefault(); escolher(''); };
     $$('#pn tbody tr[data-uid]').forEach(tr => tr.onclick = () => escolher(tr.dataset.uid === uid ? '' : tr.dataset.uid));
   };
   desenhar();

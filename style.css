@@ -250,3 +250,6 @@ fieldset.hist legend{font-size:12px;font-weight:700;color:var(--ink-2);padding:0
 .tl-o-que{margin-top:3px;font-size:13px}
 .tl-o-que .seta{color:var(--ink-3);margin:0 4px}
 .tl-obs{margin-top:4px;font-size:13px;color:var(--ink);background:#fff;border:1px solid var(--line-2);border-radius:8px;padding:6px 9px;white-space:pre-wrap}
+/* tabela por técnico mais compacta para caber sem rolagem */
+table.tab-tec th{white-space:normal;line-height:1.2;vertical-align:bottom;padding:8px 8px;font-size:11px}
+table.tab-tec td{padding:9px 8px}
