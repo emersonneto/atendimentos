@@ -443,7 +443,14 @@ function formAtendimento(a) {
         <label class="f"><span>Usuário (quem será atendido)</span><input type="text" name="usuario_atendido" value="${esc(a.usuario_atendido)}" ${dis}></label>
       </div>
     </fieldset>
-    <label class="f"><span>Observações</span><textarea name="obs" rows="3" ${dis}>${esc(a.obs)}</textarea></label>
+    <label class="f"><span>Observações gerais</span><textarea name="obs" rows="2" ${dis}>${esc(a.obs)}</textarea></label>
+    <fieldset class="hist">
+      <legend>Histórico de status</legend>
+      ${podeEditar ? `<label class="f"><span>${novo ? 'Observação inicial (opcional)' : 'Observação desta alteração'}</span>
+        <textarea name="obs_alteracao" rows="2" placeholder="${novo ? 'Ex.: usuário relatou que a impressora não liga.' : 'Ex.: usuário não atendeu, liguei no ramal 2; agendado para amanhã às 9h.'}"></textarea>
+        <div class="hint">Fica registrado no histórico com data, hora e o seu nome. ${novo ? '' : 'Mudou o status? Explique aqui o motivo.'}</div></label>` : ''}
+      ${linhaDoTempo(a.historico)}
+    </fieldset>
     ${!novo ? `<p class="hint">Registrado por ${esc(nomeDe(a.uid, a.tecnico))}</p>` : ''}
   </form>`;
   const salvar = async ov => {
@@ -453,6 +460,17 @@ function formAtendimento(a) {
     const uid = admin && d.uid ? d.uid : (a.uid || S.perfil.id);
     const at = montarAtendimento(d, uid, nomeDe(uid, S.perfil.nome));
     const er = validar(at); if (er) { erroBox($('#e', ov), er); ov.scrollTop = 0; return false; }
+    // não deixa registrar o mesmo número de chamado SMAX duas vezes
+    if (at.smax && (novo || at.smax !== a.smax)) {
+      const dup = await smaxDuplicado(at.smax, a.id);
+      if (dup) { avisoDuplicado($('#e', ov), dup, ov); ov.scrollTop = 0; return false; }
+    }
+    // histórico: guarda criação, mudança de status e observações da alteração
+    const obsAlt = s(d.obs_alteracao).slice(0, 1000);
+    const hist = Array.isArray(a.historico) ? [...a.historico] : [];
+    if (novo) hist.push({ em: agoraLocal(), por: S.perfil.nome, de: '', para: at.status, obs: obsAlt });
+    else if (at.status !== (a.status || '') || obsAlt) hist.push({ em: agoraLocal(), por: S.perfil.nome, de: a.status || '', para: at.status, obs: obsAlt });
+    at.historico = hist.slice(-300);
     try {
       await api.salvarAtendimento(novo ? null : a.id, at);
       toast(novo ? 'Atendimento registrado.' : 'Atendimento atualizado.');
@@ -470,6 +488,12 @@ function formAtendimento(a) {
   else botoes.push({ t: 'Fechar', primary: true });
   modal(novo ? 'Novo atendimento' : `Atendimento ${esc(a.smax || '')}`, body, botoes, '', ov => {
     const f = $('#fa', ov);
+    // aviso de chamado duplicado já ao sair do campo SMAX
+    if (podeEditar) f.smax.addEventListener('change', async () => {
+      const v = s(f.smax.value); if (!v || (!novo && v === a.smax)) return erroBox($('#e', ov), '');
+      const dup = await smaxDuplicado(v, a.id).catch(() => null);
+      if (dup) avisoDuplicado($('#e', ov), dup, ov); else erroBox($('#e', ov), '');
+    });
     const atualizaDur = () => { const d = duracao(f.inicio.value, f.termino.value); $('#dur', ov).textContent = d ? `Tempo de atendimento: ${d}` : ''; };
     $$('[data-agora]', f).forEach(b => b.onclick = () => { f[b.dataset.agora].value = agoraLocal(); atualizaDur(); });
     f.inicio.oninput = f.termino.oninput = atualizaDur; atualizaDur();
@@ -485,6 +509,25 @@ function formAtendimento(a) {
       }
     }));
   });
+}
+// procura outro atendimento com o mesmo SMAX (em qualquer mês)
+async function smaxDuplicado(smax, idAtual) {
+  const l = await api.buscarPorSmax(smax);
+  return l.find(x => x.id !== idAtual) || null;
+}
+function avisoDuplicado(el, dup, ov) {
+  el.innerHTML = `<div class="err">O chamado SMAX <b>${esc(dup.smax)}</b> já foi registrado por <b>${esc(nomeDe(dup.uid, dup.tecnico))}</b>
+    em ${fmtData(dup.data_ref)} (${esc(dup.status || 'sem status')}). Atualize o registro existente em vez de criar outro.
+    <div style="margin-top:8px"><button type="button" class="btn sm" id="abrirDup">Abrir registro existente</button></div></div>`;
+  $('#abrirDup', el).onclick = () => { ov.remove(); formAtendimento(dup); };
+}
+// linha do tempo do histórico (mais recente primeiro)
+function linhaDoTempo(h) {
+  if (!Array.isArray(h) || !h.length) return '<p class="hint" style="margin:4px 0 8px">Ainda sem histórico. As próximas mudanças de status e observações vão aparecer aqui.</p>';
+  return `<ol class="timeline">${[...h].reverse().map(e => `<li>
+    <div class="tl-quando">${fmtData(e.em)} ${esc((e.em || '').slice(11, 16))} · <b>${esc(e.por || '')}</b></div>
+    <div class="tl-o-que">${!e.de && e.para ? `Registrado como ${chip(e.para)}` : e.de !== e.para ? `${chip(e.de)} <span class="seta">→</span> ${chip(e.para)}` : 'Observação'}</div>
+    ${e.obs ? `<div class="tl-obs">${esc(e.obs)}</div>` : ''}</li>`).join('')}</ol>`;
 }
 function refresh() { if (S.recarregar && rota() === 'atendimentos') S.recarregar(); else render(); }
 
@@ -751,7 +794,7 @@ async function exportarExcel() {
     while (usados.has(nomeAba.toLowerCase())) nomeAba = nomeAba.slice(0, 27) + ' ' + usados.size;
     usados.add(nomeAba.toLowerCase());
     const w = wb.addWorksheet(nomeAba);
-    ['Solicitação SMAX', 'Comarca', 'Inicio Atendimento', 'Termino Atendimento', 'Tempo Atendimento', 'Ticket Softplan', 'STATUS', 'Encaminhado para', 'HOME/LOCAL', 'Usuário', 'Obs']
+    ['Solicitação SMAX', 'Comarca', 'Inicio Atendimento', 'Termino Atendimento', 'Tempo Atendimento', 'Ticket Softplan', 'STATUS', 'Encaminhado para', 'HOME/LOCAL', 'Usuário', 'Obs', 'Histórico']
       .forEach((h, i) => { const c = w.getCell(1, 1 + i); c.value = h; cab(c); });
     w.getRow(1).height = 30;
     const meus = lista.filter(a => a.uid === lin.uid).sort((a, b) => (a.inicio || a.data_ref).localeCompare(b.inicio || b.data_ref));
@@ -763,7 +806,9 @@ async function exportarExcel() {
       if (ini && fim) { w.getCell(r, 5).value = { formula: `D${r}-C${r}` }; w.getCell(r, 5).numFmt = '[h]:mm'; }
       w.getCell(r, 6).value = a.ticket_softplan; w.getCell(r, 7).value = a.status; w.getCell(r, 8).value = a.encaminhado_para;
       w.getCell(r, 9).value = a.home_local; w.getCell(r, 10).value = a.usuario_atendido; w.getCell(r, 11).value = a.obs;
-      for (let c = 1; c <= 11; c++) w.getCell(r, c).border = borda;
+      w.getCell(r, 12).value = (a.historico || []).map(e => `${fmtData(e.em)} ${(e.em || '').slice(11, 16)} ${e.por || ''}: ${e.de && e.de !== e.para ? e.de + ' → ' : ''}${e.para || ''}${e.obs ? ' — ' + e.obs : ''}`).join('\n');
+      w.getCell(r, 12).alignment = { wrapText: true, vertical: 'top' };
+      for (let c = 1; c <= 12; c++) w.getCell(r, c).border = borda;
     });
     w.getCell('P2').value = 'TOTAIS'; cab(w.getCell('P2')); cab(w.getCell('Q2'));
     [['ENCAMINHADO', lin.encaminhado], ['TENT CONTATO', lin.tent_contato], ['AGENDADO', lin.agendado], ['FECHADO', lin.fechado], ['HOME', lin.home], ['LOCAL', lin.local], ['TOTAL (sem tent. contato)', lin.total]]
@@ -774,7 +819,7 @@ async function exportarExcel() {
       const d = toDate(a.agendamento); if (d) { w.getCell(3 + i, 19).value = d; w.getCell(3 + i, 19).numFmt = 'dd/mm hh:mm'; }
       w.getCell(3 + i, 20).value = a.smax; w.getCell(3 + i, 21).value = a.usuario_atendido; w.getCell(3 + i, 22).value = a.obs;
     });
-    [18, 22, 18, 18, 14, 16, 15, 17, 12, 22, 40, 2, 2, 2, 2, 15, 8, 2, 14, 16, 20, 30].forEach((wd, i) => w.getColumn(i + 1).width = wd);
+    [18, 22, 18, 18, 14, 16, 15, 17, 12, 22, 40, 60, 2, 2, 2, 15, 8, 2, 14, 16, 20, 30].forEach((wd, i) => w.getColumn(i + 1).width = wd);
     w.views = [{ state: 'frozen', ySplit: 1 }];
   }
   const buf = await wb.xlsx.writeBuffer();

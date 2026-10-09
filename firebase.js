@@ -94,6 +94,8 @@ export const api = {
     if (uid) f.push(where('uid', '==', uid));
     return lista(await getDocs(query(col('atendimentos'), ...f)));
   }),
+  // usado para não deixar registrar o mesmo chamado SMAX duas vezes
+  buscarPorSmax: tentar(async smax => lista(await getDocs(query(col('atendimentos'), where('smax', '==', String(smax).trim()))))),
   listarAgendados: tentar(async ({ uid }) => {
     const f = [where('status', '==', 'AGENDADO')];
     if (uid) f.push(where('uid', '==', uid));
