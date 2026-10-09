@@ -221,3 +221,12 @@ fieldset.ag legend{font-size:12px;font-weight:700;color:var(--st-ag);padding:0 6
 .cal-dia small{font-size:11px;opacity:.85}
 @media (max-width:640px){.cal{gap:3px}.cal-dia{min-height:52px;padding:4px}.cal-dia small{display:none}.cal-dia b{font-size:16px}}
 td.tempo{font-weight:600;color:var(--brand-2)}
+/* filtro por técnico no painel */
+.filtro-tec{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.filtro-tec label{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;color:var(--ink-2)}
+.filtro-tec select{width:auto;min-width:200px}
+.filtro-info{font-size:13px;color:var(--ink-2)}
+tr.sel td{background:var(--brand-soft)!important;font-weight:600}
+tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--brand-2)}
+tr.apagado td{color:var(--ink-3)}
+tr.apagado td.tempo{color:var(--ink-3)}

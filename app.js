@@ -17,6 +17,7 @@ const S = {
   usuarios: null,     // equipe (cache)
   mes: mesAtual(),
   filtros: { q: '', status: '', tecnico: null },
+  painelTec: '',
   telaAuth: 'entrar',
 };
 const isAdmin = () => S.perfil && S.perfil.perfil === 'admin';
@@ -560,37 +561,58 @@ async function telaPainel(main) {
   $('#exp').onclick = exportarExcel;
   let lista; try { lista = await api.listarAtendimentos({ mes: S.mes }); } catch (e) { return toast(e.message, true); }
   S.comarcas = [...new Set([...lista.map(a => a.comarca), ...(S.comarcas || [])])];
-  const p = montarPainel(S.mes, lista); const T = p.total;
-  const linha = (r, tot) => `<tr class="${tot ? 'total' : ''}"><td>${esc(r.nome)}</td><td class="num">${r.encaminhado}</td><td class="num">${r.tent_contato}</td><td class="num">${r.agendado}</td><td class="num">${r.fechado}</td><td class="num">${r.home}</td><td class="num">${r.local}</td><td class="num"><b>${r.total}</b></td><td class="num">${r.com_tempo ? fmtMin(r.min_total) : '—'}</td><td class="num tempo" title="${r.com_tempo} atendimento(s) com início e término">${fmtMin(r.min_medio)}</td></tr>`;
-  const maxD = Math.max(1, ...p.destinos.map(d => d.n)), maxC = Math.max(1, ...p.porComarca.map(d => d.n));
-  $('#pn').innerHTML = `
-    <div class="kpis">
-      <div class="kpi enc"><span>Encaminhado</span><b>${T.encaminhado}</b></div>
-      <div class="kpi tent"><span>Tent. contato</span><b>${T.tent_contato}</b></div>
-      <div class="kpi ag"><span>Agendado</span><b>${T.agendado}</b></div>
-      <div class="kpi fech"><span>Fechado</span><b>${T.fechado}</b></div>
-      <div class="kpi tot"><span>Total geral</span><b>${T.total}</b></div>
-      <div class="kpi"><span>Média diária</span><b>${String(p.mediaDiaria).replace('.', ',')}</b></div>
-      <div class="kpi"><span>Tempo médio</span><b>${fmtMin(T.min_medio)}</b></div>
-    </div>
-    <div class="grid2">
-      <div class="card"><h3>Por técnico</h3><div class="tablewrap"><table>
-        <thead><tr><th>Técnico</th><th class="num">Encaminhado</th><th class="num">Tent. contato</th><th class="num">Agendado</th><th class="num">Fechado</th><th class="num">Remoto/Home</th><th class="num">Local</th><th class="num">Total geral</th><th class="num">Horas totais</th><th class="num">Tempo médio</th></tr></thead>
-        <tbody>${p.linhas.map(r => linha(r)).join('')}${linha(T, true)}</tbody></table></div>
-        <div class="pad hint">Média diária = total geral ÷ ${p.diasUteis} dias úteis ${p.mes === mesAtual() ? 'até hoje' : 'do mês'}.
-          Tempo médio = horas de atendimento ÷ atendimentos com início e término preenchidos.</div></div>
-      <div style="display:grid;gap:14px;align-content:start">
-        <div class="card"><h3>Atendimento SAJ — encaminhados para</h3><div class="pad bars">${p.destinos.map(d => `<div class="bar"><span>${esc(d.destino)}</span><div class="t"><i style="width:${d.n / maxD * 100}%"></i></div><b>${d.n}</b></div>`).join('')}</div></div>
-        <div class="card"><h3>Comarcas com mais atendimentos</h3><div class="pad bars">${p.porComarca.length ? p.porComarca.map(d => `<div class="bar"><span title="${esc(d.comarca)}">${esc(d.comarca)}</span><div class="t"><i style="width:${d.n / maxC * 100}%"></i></div><b>${d.n}</b></div>`).join('') : '<div class="muted">Sem dados no mês.</div>'}</div></div>
+  const geral = montarPainel(S.mes, lista);           // tabela "Por técnico" sempre com a equipe toda
+  if (S.painelTec && !geral.linhas.some(r => r.uid === S.painelTec)) S.painelTec = '';
+
+  const desenhar = () => {
+    const uid = S.painelTec || '';
+    const sel = geral.linhas.find(r => r.uid === uid);
+    const doSel = uid ? lista.filter(a => a.uid === uid) : lista;
+    const p = uid ? montarPainel(S.mes, doSel) : geral;  // cartões, gráficos e calendário seguem o filtro
+    const T = uid ? sel : geral.total;
+    const media = p.diasUteis ? +(T.total / p.diasUteis).toFixed(1) : 0;
+    const linha = (r, tot) => `<tr class="${tot ? 'total' : ''} click ${!tot && r.uid === uid ? 'sel' : ''} ${uid && !tot && r.uid !== uid ? 'apagado' : ''}" data-uid="${tot ? '' : esc(r.uid)}" title="${tot ? 'Ver todos os técnicos' : 'Ver só ' + esc(r.nome)}">
+      <td>${esc(r.nome)}</td><td class="num">${r.encaminhado}</td><td class="num">${r.tent_contato}</td><td class="num">${r.agendado}</td><td class="num">${r.fechado}</td><td class="num">${r.home}</td><td class="num">${r.local}</td><td class="num"><b>${r.total}</b></td><td class="num">${r.com_tempo ? fmtMin(r.min_total) : '—'}</td><td class="num tempo" title="${r.com_tempo} atendimento(s) com início e término">${fmtMin(r.min_medio)}</td></tr>`;
+    const maxD = Math.max(1, ...p.destinos.map(d => d.n)), maxC = Math.max(1, ...p.porComarca.map(d => d.n));
+    $('#pn').innerHTML = `
+      <div class="filtro-tec">
+        <label>Técnico:
+          <select id="pTec"><option value="">Todos os técnicos</option>${geral.linhas.map(r => `<option value="${esc(r.uid)}" ${r.uid === uid ? 'selected' : ''}>${esc(r.nome)}</option>`).join('')}</select></label>
+        ${uid ? `<span class="filtro-info">Mostrando apenas <b>${esc(sel.nome)}</b> · <a href="#" id="verTodos">ver todos</a></span>` : '<span class="filtro-info">Clique em um técnico na tabela para ver só as informações dele.</span>'}
       </div>
-    </div>
-    <div class="card cal-card">
-      <div class="cal-head"><h3>Calendário de ${esc(nomeMes(S.mes))}</h3>
-        <select id="calTec" aria-label="Técnico do calendário"><option value="">Todos os técnicos</option>${p.linhas.map(r => `<option value="${esc(r.uid)}">${esc(r.nome)}</option>`).join('')}</select></div>
-      <div class="pad" id="cal"></div>
-    </div>`;
-  const desenhar = () => calendario($('#cal'), lista, $('#calTec').value);
-  $('#calTec').onchange = desenhar; desenhar();
+      <div class="kpis">
+        <div class="kpi enc"><span>Encaminhado</span><b>${T.encaminhado}</b></div>
+        <div class="kpi tent"><span>Tent. contato</span><b>${T.tent_contato}</b></div>
+        <div class="kpi ag"><span>Agendado</span><b>${T.agendado}</b></div>
+        <div class="kpi fech"><span>Fechado</span><b>${T.fechado}</b></div>
+        <div class="kpi tot"><span>Total geral</span><b>${T.total}</b></div>
+        <div class="kpi"><span>Média diária</span><b>${String(media).replace('.', ',')}</b></div>
+        <div class="kpi"><span>Tempo médio</span><b>${fmtMin(T.min_medio)}</b></div>
+      </div>
+      <div class="grid2">
+        <div class="card"><h3>Por técnico</h3><div class="tablewrap"><table>
+          <thead><tr><th>Técnico</th><th class="num">Encaminhado</th><th class="num">Tent. contato</th><th class="num">Agendado</th><th class="num">Fechado</th><th class="num">Remoto/Home</th><th class="num">Local</th><th class="num">Total geral</th><th class="num">Horas totais</th><th class="num">Tempo médio</th></tr></thead>
+          <tbody>${geral.linhas.map(r => linha(r)).join('')}${linha(geral.total, true)}</tbody></table></div>
+          <div class="pad hint">Média diária = total geral ÷ ${p.diasUteis} dias úteis ${p.mes === mesAtual() ? 'até hoje' : 'do mês'}.
+            Tempo médio = horas de atendimento ÷ atendimentos com início e término preenchidos.</div></div>
+        <div style="display:grid;gap:14px;align-content:start">
+          <div class="card"><h3>Atendimento SAJ — encaminhados para${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ''}</h3><div class="pad bars">${p.destinos.map(d => `<div class="bar"><span>${esc(d.destino)}</span><div class="t"><i style="width:${d.n / maxD * 100}%"></i></div><b>${d.n}</b></div>`).join('')}</div></div>
+          <div class="card"><h3>Comarcas com mais atendimentos${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ''}</h3><div class="pad bars">${p.porComarca.length ? p.porComarca.map(d => `<div class="bar"><span title="${esc(d.comarca)}">${esc(d.comarca)}</span><div class="t"><i style="width:${d.n / maxC * 100}%"></i></div><b>${d.n}</b></div>`).join('') : '<div class="muted">Sem dados no mês.</div>'}</div></div>
+        </div>
+      </div>
+      <div class="card cal-card">
+        <div class="cal-head"><h3>Calendário de ${esc(nomeMes(S.mes))}${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ' <span class="muted">· todos os técnicos</span>'}</h3>
+          <select id="calTec" aria-label="Técnico"><option value="">Todos os técnicos</option>${geral.linhas.map(r => `<option value="${esc(r.uid)}" ${r.uid === uid ? 'selected' : ''}>${esc(r.nome)}</option>`).join('')}</select></div>
+        <div class="pad" id="cal"></div>
+      </div>`;
+    calendario($('#cal'), doSel, '');
+    const escolher = v => { S.painelTec = v; desenhar(); };
+    $('#pTec').onchange = e => escolher(e.target.value);
+    $('#calTec').onchange = e => escolher(e.target.value);
+    if ($('#verTodos')) $('#verTodos').onclick = e => { e.preventDefault(); escolher(''); };
+    $$('#pn tbody tr[data-uid]').forEach(tr => tr.onclick = () => escolher(tr.dataset.uid === uid ? '' : tr.dataset.uid));
+  };
+  desenhar();
 }
 
 // calendário do mês: quantidade de atendimentos por dia; clique no dia mostra a lista
