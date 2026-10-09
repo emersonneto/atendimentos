@@ -132,7 +132,8 @@ const CAMPANHAS = [
   { mes: 'Dezembro', nome: 'Dezembro Vermelho', cor: '#b3202a', tema: 'HIV/AIDS',
     texto: 'Prevenção ao HIV/AIDS e outras ISTs. Faça o teste: é gratuito no SUS, e o tratamento também.' },
 ];
-const campanhaAtual = () => CAMPANHAS[new Date().getMonth()];
+// dentro do sistema segue o mês selecionado no filtro; na tela de login, o mês de hoje
+const campanhaAtual = () => CAMPANHAS[S.perfil && S.perfil.ativo && S.mes ? Number(S.mes.slice(5, 7)) - 1 : new Date().getMonth()];
 function seloCampanha() {
   const c = campanhaAtual();
   return `<div class="campanha">
