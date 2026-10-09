@@ -253,3 +253,5 @@ fieldset.hist legend{font-size:12px;font-weight:700;color:var(--ink-2);padding:0
 /* tabela por técnico mais compacta para caber sem rolagem */
 table.tab-tec th{white-space:normal;line-height:1.2;vertical-align:bottom;padding:8px 8px;font-size:11px}
 table.tab-tec td{padding:9px 8px}
+.cal-dia.escolhido{outline:3px solid var(--brand);outline-offset:1px}
+.filtro-tec select#pDia{min-width:170px}

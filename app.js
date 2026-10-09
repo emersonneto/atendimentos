@@ -18,6 +18,7 @@ const S = {
   mes: mesAtual(),
   filtros: { q: '', status: '', tecnico: null, dia: '' },
   painelTec: '',
+  painelDia: '',
   telaAuth: 'entrar',
 };
 const isAdmin = () => S.perfil && S.perfil.perfil === 'admin';
@@ -630,28 +631,44 @@ async function telaPainel(main) {
   main.innerHTML = `<div class="head"><div><h2>Painel — Atendimento Técnico Field</h2><p>${esc(nomeMes(S.mes))}</p></div>
     <div class="toolbar" style="margin:0"><input type="month" id="fMes" value="${S.mes}"><button class="btn" id="exp">Exportar Excel</button></div></div>
     <div id="pn"><div class="empty">Carregando…</div></div>`;
-  $('#fMes').onchange = e => { if (e.target.value) { S.mes = e.target.value; render(); } };
+  $('#fMes').onchange = e => { if (e.target.value) { S.mes = e.target.value; S.painelDia = ''; render(); } };
   $('#exp').onclick = exportarExcel;
   let lista; try { lista = await api.listarAtendimentos({ mes: S.mes }); } catch (e) { return toast(e.message, true); }
   S.comarcas = [...new Set([...lista.map(a => a.comarca), ...(S.comarcas || [])])];
-  const geral = montarPainel(S.mes, lista);           // tabela "Por técnico" sempre com a equipe toda
-  if (S.painelTec && !geral.linhas.some(r => r.uid === S.painelTec)) S.painelTec = '';
+  const mesGeral = montarPainel(S.mes, lista);        // lista de técnicos do mês (para os seletores)
+  if (S.painelTec && !mesGeral.linhas.some(r => r.uid === S.painelTec)) S.painelTec = '';
+  if (S.painelDia && S.painelDia.slice(0, 7) !== S.mes) S.painelDia = '';
+  const semana = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 
   const desenhar = () => {
-    const uid = S.painelTec || '';
-    const sel = geral.linhas.find(r => r.uid === uid);
-    const doSel = uid ? lista.filter(a => a.uid === uid) : lista;
-    const p = uid ? montarPainel(S.mes, doSel) : geral;  // cartões, gráficos e calendário seguem o filtro
-    const T = uid ? sel : geral.total;
+    const uid = S.painelTec || '', dia = S.painelDia || '';
+    const doMesTec = uid ? lista.filter(a => a.uid === uid) : lista;   // calendário e tentativas por dia: mês inteiro
+    const base = dia ? lista.filter(a => a.data_ref === dia) : lista;   // filtro de dia vale para o resto do painel
+    const geral = dia ? montarPainel(S.mes, base) : mesGeral;
+    const sel = geral.linhas.find(r => r.uid === uid) || mesGeral.linhas.find(r => r.uid === uid);
+    const doSel = uid ? base.filter(a => a.uid === uid) : base;
+    const p = uid ? montarPainel(S.mes, doSel) : geral;  // cartões e gráficos seguem os filtros
+    const T = uid ? (geral.linhas.find(r => r.uid === uid) || sel) : geral.total;
     const media = p.diasUteis ? +(T.total / p.diasUteis).toFixed(1) : 0;
+    const [yy, mm] = S.mes.split('-').map(Number), nDias = new Date(yy, mm, 0).getDate();
+    const contDia = {}; doMesTec.forEach(a => { contDia[a.data_ref] = (contDia[a.data_ref] || 0) + 1; });
+    let opcDias = '<option value="">Todos os dias</option>';
+    for (let d = 1; d <= nDias; d++) {
+      const iso = `${S.mes}-${String(d).padStart(2, '0')}`, q = contDia[iso] || 0;
+      opcDias += `<option value="${iso}" ${dia === iso ? 'selected' : ''}>${String(d).padStart(2, '0')}/${S.mes.slice(5, 7)} (${semana[new Date(yy, mm - 1, d).getDay()]})${q ? ` — ${q}` : ''}</option>`;
+    }
+    const filtros = [uid ? `<b>${esc(sel.nome)}</b>` : '', dia ? `<b>${fmtData(dia)}</b>` : ''].filter(Boolean).join(' · ');
     const linha = (r, tot) => `<tr class="${tot ? 'total' : ''} click ${!tot && r.uid === uid ? 'sel' : ''} ${uid && !tot && r.uid !== uid ? 'apagado' : ''}" data-uid="${tot ? '' : esc(r.uid)}" title="${tot ? 'Ver todos os técnicos' : 'Ver só ' + esc(r.nome)}">
       <td>${esc(r.nome)}</td><td class="num">${r.encaminhado}</td><td class="num">${r.tent_contato}</td><td class="num">${r.agendado}</td><td class="num">${r.fechado}</td><td class="num">${r.home}</td><td class="num">${r.local}</td><td class="num"><b>${r.total}</b></td><td class="num">${r.com_tempo ? fmtMin(r.min_total) : '—'}</td><td class="num tempo" title="${r.com_tempo} atendimento(s) com início e término">${fmtMin(r.min_medio)}</td><td class="num col-tent">${r.tent_com_tempo ? fmtMin(r.tent_min_total) : '—'}</td><td class="num col-tent tempo-tent" title="${r.tent_com_tempo} tentativa(s) com início e término">${fmtMin(r.tent_min_medio)}</td></tr>`;
     const maxD = Math.max(1, ...p.destinos.map(d => d.n)), maxC = Math.max(1, ...p.porComarca.map(d => d.n));
     $('#pn').innerHTML = `
       <div class="filtro-tec">
         <label>Técnico:
-          <select id="pTec"><option value="">Todos os técnicos</option>${geral.linhas.map(r => `<option value="${esc(r.uid)}" ${r.uid === uid ? 'selected' : ''}>${esc(r.nome)}</option>`).join('')}</select></label>
-        ${uid ? `<span class="filtro-info">Mostrando apenas <b>${esc(sel.nome)}</b> · <a href="#" id="verTodos">ver todos</a></span>` : '<span class="filtro-info">Clique em um técnico na tabela para ver só as informações dele.</span>'}
+          <select id="pTec"><option value="">Todos os técnicos</option>${mesGeral.linhas.map(r => `<option value="${esc(r.uid)}" ${r.uid === uid ? 'selected' : ''}>${esc(r.nome)}</option>`).join('')}</select></label>
+        <label>Dia:
+          <select id="pDia">${opcDias}</select></label>
+        ${S.mes === mesAtual() ? '<button type="button" class="btn" id="pHoje">Hoje</button>' : ''}
+        ${filtros ? `<span class="filtro-info">Mostrando apenas ${filtros} · <a href="#" id="limparFiltros">limpar filtros</a>${dia ? ` · <a href="#" id="listaDia">ver atendimentos do dia</a>` : ''}</span>` : '<span class="filtro-info">Clique em um técnico na tabela ou em um dia do calendário para filtrar.</span>'}
       </div>
       <div class="kpis">
         <div class="kpi enc"><span>Encaminhado</span><b>${T.encaminhado}</b></div>
@@ -659,35 +676,39 @@ async function telaPainel(main) {
         <div class="kpi ag"><span>Agendado</span><b>${T.agendado}</b></div>
         <div class="kpi fech"><span>Fechado</span><b>${T.fechado}</b></div>
         <div class="kpi tot"><span>Total geral</span><b>${T.total}</b></div>
-        <div class="kpi"><span>Média diária</span><b>${String(media).replace('.', ',')}</b></div>
+        ${dia ? `<div class="kpi"><span>Média diária</span><b>—</b><small class="fora">dia selecionado</small></div>` : `<div class="kpi"><span>Média diária</span><b>${String(media).replace('.', ',')}</b></div>`}
         <div class="kpi"><span>Tempo médio</span><b>${fmtMin(T.min_medio)}</b></div>
         <div class="kpi tent" title="Tempo médio de cada tentativa de contato (início até término)"><span>Média por tentativa</span><b>${fmtMin(T.tent_min_medio)}</b><small class="fora">${T.tent_com_tempo ? fmtMin(T.tent_min_total) + ' em tentativas' : 'sem tentativas com horário'}</small></div>
       </div>
-      <div class="card"><h3>Por técnico</h3><div class="tablewrap"><table class="tab-tec">
+      <div class="card"><h3>Por técnico${dia ? ` <span class="muted">· ${fmtData(dia)}</span>` : ''}</h3><div class="tablewrap"><table class="tab-tec">
           <thead><tr><th>Técnico</th><th class="num">Encaminhado</th><th class="num" title="Não conta no total">Tent. contato*</th><th class="num">Agendado</th><th class="num">Fechado</th><th class="num">Remoto/Home</th><th class="num">Local</th><th class="num">Total geral</th><th class="num">Horas totais</th><th class="num">Tempo médio</th><th class="num col-tent">Horas em tent.</th><th class="num col-tent">Média por tent.</th></tr></thead>
           <tbody>${(uid ? geral.linhas.filter(r => r.uid === uid) : geral.linhas).map(r => linha(r)).join('')}${uid ? '' : linha(geral.total, true)}</tbody></table></div>
           ${uid ? `<div class="pad hint" style="padding-bottom:0">Mostrando só ${esc(sel.nome)}. <a href="#" id="verTodos2">Ver todos os técnicos</a></div>` : ''}
-          <div class="pad hint"><b>Tentativa de contato não conta como chamado atendido</b>: aparece na coluna própria, mas fica fora do total geral, das horas, do tempo médio, dos gráficos e do calendário.<br>Média diária = total geral ÷ ${p.diasUteis} dias úteis ${p.mes === mesAtual() ? 'até hoje' : 'do mês'}.
+          <div class="pad hint"><b>Tentativa de contato não conta como chamado atendido</b>: aparece na coluna própria, mas fica fora do total geral, das horas, do tempo médio, dos gráficos e do calendário.<br>${dia ? 'Números do dia ' + fmtData(dia) + '.' : `Média diária = total geral ÷ ${p.diasUteis} dias úteis ${p.mes === mesAtual() ? 'até hoje' : 'do mês'}.`}
             Tempo médio = horas de atendimento ÷ atendimentos com início e término preenchidos.</div></div>
       <div class="graficos">
-          <div class="card"><h3>Atendimento SAJ — encaminhados para${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ''}</h3><div class="pad bars">${p.destinos.map(d => `<div class="bar"><span>${esc(d.destino)}</span><div class="t"><i style="width:${d.n / maxD * 100}%"></i></div><b>${d.n}</b></div>`).join('')}</div></div>
-          <div class="card"><h3>Comarcas com mais atendimentos${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ''}</h3><div class="pad bars">${p.porComarca.length ? p.porComarca.map(d => `<div class="bar"><span title="${esc(d.comarca)}">${esc(d.comarca)}</span><div class="t"><i style="width:${d.n / maxC * 100}%"></i></div><b>${d.n}</b></div>`).join('') : '<div class="muted">Sem dados no mês.</div>'}</div></div>
+          <div class="card"><h3>Atendimento SAJ — encaminhados para${filtros ? ` <span class="muted">· ${filtros.replace(/<\/?b>/g, '')}</span>` : ''}</h3><div class="pad bars">${p.destinos.map(d => `<div class="bar"><span>${esc(d.destino)}</span><div class="t"><i style="width:${d.n / maxD * 100}%"></i></div><b>${d.n}</b></div>`).join('')}</div></div>
+          <div class="card"><h3>Comarcas com mais atendimentos${filtros ? ` <span class="muted">· ${filtros.replace(/<\/?b>/g, '')}</span>` : ''}</h3><div class="pad bars">${p.porComarca.length ? p.porComarca.map(d => `<div class="bar"><span title="${esc(d.comarca)}">${esc(d.comarca)}</span><div class="t"><i style="width:${d.n / maxC * 100}%"></i></div><b>${d.n}</b></div>`).join('') : `<div class="muted">Sem dados ${dia ? 'no dia' : 'no mês'}.</div>`}</div></div>
       </div>
       <div class="card cal-card">
         <div class="cal-head"><h3>Calendário de ${esc(nomeMes(S.mes))}${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ' <span class="muted">· todos os técnicos</span>'}</h3>
-          <select id="calTec" aria-label="Técnico"><option value="">Todos os técnicos</option>${geral.linhas.map(r => `<option value="${esc(r.uid)}" ${r.uid === uid ? 'selected' : ''}>${esc(r.nome)}</option>`).join('')}</select></div>
+          <select id="calTec" aria-label="Técnico"><option value="">Todos os técnicos</option>${mesGeral.linhas.map(r => `<option value="${esc(r.uid)}" ${r.uid === uid ? 'selected' : ''}>${esc(r.nome)}</option>`).join('')}</select></div>
         <div class="pad" id="cal"></div>
       </div>
       <div class="card cal-card">
         <h3>Tentativas de contato por dia${uid ? ` <span class="muted">· ${esc(sel.nome)}</span>` : ' <span class="muted">· todos os técnicos</span>'}</h3>
         <div class="tablewrap" id="tentDia"></div>
       </div>`;
-    calendario($('#cal'), doSel, '');
-    tentativasPorDia($('#tentDia'), doSel, !uid);
+    calendario($('#cal'), doMesTec, '', { sel: dia, aoClicar: iso => escolherDia(iso === dia ? '' : iso) });
+    tentativasPorDia($('#tentDia'), doMesTec, !uid);
     const escolher = v => { S.painelTec = v; desenhar(); };
+    const escolherDia = v => { S.painelDia = v; desenhar(); };
+    $('#pDia').onchange = e => escolherDia(e.target.value);
+    if ($('#pHoje')) $('#pHoje').onclick = () => escolherDia(hojeISO());
+    if ($('#limparFiltros')) $('#limparFiltros').onclick = e => { e.preventDefault(); S.painelTec = ''; S.painelDia = ''; desenhar(); };
+    if ($('#listaDia')) $('#listaDia').onclick = e => { e.preventDefault(); diaDetalhe(Number(dia.slice(8, 10)), doSel); };
     $('#pTec').onchange = e => escolher(e.target.value);
     $('#calTec').onchange = e => escolher(e.target.value);
-    if ($('#verTodos')) $('#verTodos').onclick = e => { e.preventDefault(); escolher(''); };
     if ($('#verTodos2')) $('#verTodos2').onclick = e => { e.preventDefault(); escolher(''); };
     $$('#pn tbody tr[data-uid]').forEach(tr => tr.onclick = () => escolher(tr.dataset.uid === uid ? '' : tr.dataset.uid));
   };
@@ -695,7 +716,7 @@ async function telaPainel(main) {
 }
 
 // calendário do mês: quantidade de atendimentos por dia; clique no dia mostra a lista
-function calendario(el, lista, uid) {
+function calendario(el, lista, uid, opts = {}) {
   const [y, m] = S.mes.split('-').map(Number);
   const dias = new Date(y, m, 0).getDate(), inicioSem = new Date(y, m - 1, 1).getDay();
   const doMes = uid ? lista.filter(a => a.uid === uid) : lista;
@@ -709,14 +730,16 @@ function calendario(el, lista, uid) {
     const iso = `${S.mes}-${String(d).padStart(2, '0')}`;
     const fech = l.filter(a => a.status === 'FECHADO').length, min = l.filter(contaComoAtendido).map(minutosDe).filter(x => x !== null).reduce((t, x) => t + x, 0);
     const alpha = n ? 0.12 + 0.55 * (n / max) : 0;
-    html += `<button type="button" class="cal-dia ${w === 0 || w === 6 ? 'fds' : ''} ${iso === hoje ? 'hoje' : ''} ${l.length ? 'tem' : ''}" data-dia="${d}"
+    html += `<button type="button" class="cal-dia ${w === 0 || w === 6 ? 'fds' : ''} ${iso === hoje ? 'hoje' : ''} ${l.length ? 'tem' : ''} ${opts.sel === iso ? 'escolhido' : ''}" data-dia="${d}"
       style="${n ? `background:rgba(44,82,130,${alpha.toFixed(2)});${alpha > .45 ? 'color:#fff' : ''}` : ''}" ${l.length ? '' : 'disabled'}
       title="${l.length ? `${n} atendimento(s) · ${fech} fechado(s)${min ? ' · ' + fmtMin(min) : ''}${tent ? ` · ${tent} tentativa(s) de contato (fora do total)` : ''}` : 'Sem atendimentos'}">
       <span class="cal-n">${d}</span>${tent ? `<span class="cal-tent">+${tent} tent.</span>` : ''}${n ? `<b>${n}</b><small>${n === 1 ? 'atendimento' : 'atendimentos'}</small>` : ''}</button>`;
   }
-  html += '</div><div class="hint" style="margin-top:10px">Clique em um dia para ver os atendimentos. Quanto mais escuro, mais atendimentos no dia. "+1 tent." = tentativas de contato, que não entram na contagem.</div>';
+  html += '</div><div class="hint" style="margin-top:10px">Clique em um dia para filtrar o painel por ele (clique de novo para voltar ao mês). Quanto mais escuro, mais atendimentos no dia. "+1 tent." = tentativas de contato, que não entram na contagem.</div>';
   el.innerHTML = html;
-  $$('.cal-dia.tem', el).forEach(b => b.onclick = () => diaDetalhe(Number(b.dataset.dia), porDia[b.dataset.dia]));
+  $$('.cal-dia.tem', el).forEach(b => b.onclick = () => opts.aoClicar
+    ? opts.aoClicar(`${S.mes}-${String(b.dataset.dia).padStart(2, '0')}`)
+    : diaDetalhe(Number(b.dataset.dia), porDia[b.dataset.dia]));
 }
 // quadro diário das tentativas de contato: quantidade, horas e média por dia
 function tentativasPorDia(el, lista, mostrarTec) {
