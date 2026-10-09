@@ -16,7 +16,7 @@ const S = {
   perfil: null,       // documento em "usuarios"
   usuarios: null,     // equipe (cache)
   mes: mesAtual(),
-  filtros: { q: '', status: '', tecnico: null },
+  filtros: { q: '', status: '', tecnico: null, dia: '' },
   painelTec: '',
   telaAuth: 'entrar',
 };
@@ -358,6 +358,8 @@ async function telaAtendimentos(main) {
     <div class="kpis" id="kpis"></div>
     <div class="toolbar">
       <input type="month" id="fMes" value="${S.mes}" aria-label="Mês">
+      <select id="fDia" aria-label="Dia"><option value="">Todos os dias</option></select>
+      ${S.mes === mesAtual() ? '<button type="button" class="btn" id="fHoje">Hoje</button>' : ''}
       <input type="search" id="fQ" placeholder="Buscar SMAX, comarca, ticket, usuário…" value="${esc(S.filtros.q)}">
       <select id="fSt" aria-label="Status"><option value="">Todos os status</option>${STATUS.map(x => `<option ${S.filtros.status === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
       <select id="fTec" aria-label="Técnico"><option value="">${admin ? 'Todos os técnicos' : 'Toda a equipe'}</option>${equipe.map(t => `<option value="${t.id}" ${S.filtros.tecnico === t.id ? 'selected' : ''}>${t.id === S.perfil.id ? 'Só os meus' : esc(t.nome)}</option>`).join('')}</select>
@@ -365,7 +367,10 @@ async function telaAtendimentos(main) {
     <div class="card"><div class="tablewrap" id="tab"><div class="empty">Carregando…</div></div></div>`;
   $('#novo').onclick = () => formAtendimento(null);
   $('#exp').onclick = exportarExcel;
-  $('#fMes').onchange = e => { if (e.target.value) { S.mes = e.target.value; render(); } };
+  $('#fMes').onchange = e => { if (e.target.value) { S.mes = e.target.value; S.filtros.dia = ''; render(); } };
+  if (S.filtros.dia && S.filtros.dia.slice(0, 7) !== S.mes) S.filtros.dia = '';
+  $('#fDia').onchange = e => { S.filtros.dia = e.target.value; mostrar(); };
+  if ($('#fHoje')) $('#fHoje').onclick = () => { S.filtros.dia = hojeISO(); mostrar(); };
   let deb; $('#fQ').oninput = e => { clearTimeout(deb); deb = setTimeout(() => { S.filtros.q = e.target.value; mostrar(); }, 200); };
   $('#fSt').onchange = e => { S.filtros.status = e.target.value; mostrar(); };
   $('#fTec').onchange = e => { S.filtros.tecnico = e.target.value; carregar(); };
@@ -377,9 +382,23 @@ async function telaAtendimentos(main) {
     S.comarcas = [...new Set([...(S.comarcas || []), ...base.map(a => a.comarca).filter(Boolean)])];
     mostrar();
   }
+  // lista de dias do mês com a quantidade de registros de cada um
+  function opcoesDias() {
+    const [y, m] = S.mes.split('-').map(Number), n = new Date(y, m, 0).getDate();
+    const cont = {}; base.forEach(a => { cont[a.data_ref] = (cont[a.data_ref] || 0) + 1; });
+    const sem = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+    let html = '<option value="">Todos os dias</option>';
+    for (let d = 1; d <= n; d++) {
+      const iso = `${S.mes}-${String(d).padStart(2, '0')}`, q = cont[iso] || 0;
+      html += `<option value="${iso}" ${S.filtros.dia === iso ? 'selected' : ''}>${String(d).padStart(2, '0')}/${S.mes.slice(5, 7)} (${sem[new Date(y, m - 1, d).getDay()]})${q ? ` — ${q}` : ''}</option>`;
+    }
+    $('#fDia').innerHTML = html;
+  }
   function mostrar() {
+    opcoesDias();
     const q = S.filtros.q.trim().toLowerCase();
     let lista = base;
+    if (S.filtros.dia) lista = lista.filter(a => a.data_ref === S.filtros.dia);
     if (S.filtros.status) lista = lista.filter(a => a.status === S.filtros.status);
     if (q) lista = lista.filter(a => [a.smax, a.comarca, a.ticket_softplan, a.usuario_atendido, a.obs].some(v => (v || '').toLowerCase().includes(q)));
     const c = k => lista.filter(a => a.status === k).length;
@@ -391,7 +410,7 @@ async function telaAtendimentos(main) {
       <div class="kpi"><span>Home / Local</span><b>${lista.filter(a => a.home_local === 'HOME').length} / ${lista.filter(a => a.home_local === 'LOCAL').length}</b></div>
       <div class="kpi tot"><span>Total</span><b>${lista.length}</b></div>`;
     if (!lista.length) {
-      $('#tab').innerHTML = `<div class="empty">Nenhum atendimento em ${esc(nomeMes(S.mes))}${q || S.filtros.status ? ' com esses filtros' : ''}.<br><br><button class="btn primary" id="novo2">+ Registrar atendimento</button></div>`;
+      $('#tab').innerHTML = `<div class="empty">Nenhum atendimento ${S.filtros.dia ? 'em ' + fmtData(S.filtros.dia) : 'em ' + esc(nomeMes(S.mes))}${q || S.filtros.status ? ' com esses filtros' : ''}.<br><br><button class="btn primary" id="novo2">+ Registrar atendimento</button></div>`;
       $('#novo2').onclick = () => formAtendimento(null); return;
     }
     const mostraTec = S.filtros.tecnico !== S.perfil.id;
