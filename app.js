@@ -1,5 +1,5 @@
 /* Sistema de Atendimentos — Field (site estático + Firebase) */
-import { api } from './firebase.js?v=20261016';
+import { api } from './firebase.js?v=20261016c';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -11,8 +11,8 @@ const STATUS = ['ENCAMINHADO', 'TENT CONTATO', 'AGENDADO', 'FECHADO'];
 const ENCAMINHADO_PARA = ['GARANTIA', 'GLOBAL', 'LOGISTICA', 'QUALITY INFRA', 'SOFTPLAN', 'STI', 'REMOTO', 'REVOKE', 'VOLANTE', 'CTIS'];
 const HOME_LOCAL = ['HOME', 'LOCAL'];
 // DEVOLVIDO: o setor devolveu o chamado e ele foi reaberto em uma nova "ida" (registro novo com o mesmo SMAX)
-const MOTIVOS_DEVOLUCAO = ['Faltou informação', 'Fora do escopo do setor', 'Resolvido em parte', 'Precisa de atendimento local', 'Outro'];
-const PODE_REABRIR = ['ENCAMINHADO', 'FECHADO'];
+const MOTIVOS_DEVOLUCAO = ['Faltou informação', 'Fora do escopo do setor', 'Resolvido em parte', 'Precisa de atendimento local'];
+const PODE_REABRIR = ['ENCAMINHADO', 'FECHADO', ''];   // '' = salvo sem status
 const ordinal = n => `${n}ª ida`;
 
 const S = {
@@ -476,7 +476,8 @@ function formAtendimento(a, opts = {}) {
       <p class="hint" style="margin-top:0">A ida anterior (${fmtData(ant.data_ref)}, ${esc(nomeDe(ant.uid, ant.tecnico))}, ${esc(ant.status)}${ant.encaminhado_para ? ' para ' + esc(ant.encaminhado_para) : ''}) vai ficar como <b>DEVOLVIDO</b>. Este registro é a nova ida: conta como mais um atendimento, com o seu horário.</p>
       <div class="row">
         <label class="f"><span>Devolvido por</span><select name="dev_setor">${ENCAMINHADO_PARA.map(x => `<option ${ant.encaminhado_para === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
-        <label class="f"><span>Motivo da devolução</span><select name="dev_motivo">${MOTIVOS_DEVOLUCAO.map(x => `<option>${x}</option>`).join('')}</select></label>
+        <label class="f"><span>Motivo da devolução <em>*</em></span><input type="text" name="dev_motivo" list="dlMotivos" maxlength="200" autocomplete="off" placeholder="Escreva o motivo (ou escolha uma sugestão)">
+          <datalist id="dlMotivos">${MOTIVOS_DEVOLUCAO.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
       </div></fieldset>` : ''}
     ${!novo && ida > 1 ? `<p class="hint" style="margin-top:0"><span class="tag-ida">${ordinal(ida)}</span> Este chamado foi devolvido pelo setor e reaberto.</p>` : ''}
     ${!podeEditar ? `<div class="err" style="background:var(--brand-soft);color:var(--brand)">Atendimento de ${esc(nomeDe(a.uid, a.tecnico))}. Só ele ou o líder podem alterar.</div>` : ''}
@@ -520,6 +521,7 @@ function formAtendimento(a, opts = {}) {
     const at = montarAtendimento(d, uid, nomeDe(uid, S.perfil.nome));
     if (ant) { at.ida = ida; at.origem = ant.origem || ant.id; at.smax = ant.smax; }
     else if (!novo && a.ida) { at.ida = a.ida; if (a.origem) at.origem = a.origem; }
+    if (ant) { d.dev_motivo = s(d.dev_motivo).slice(0, 200); if (!d.dev_motivo) { erroBox($('#e', ov), 'Escreva o motivo da devolução.'); ov.scrollTop = 0; f.dev_motivo.focus(); return false; } }
     const er = validar(at); if (er) { erroBox($('#e', ov), er); ov.scrollTop = 0; return false; }
     // comarca: só aceita da lista oficial (grava sempre com o nome padronizado)
     if (listaComarcas().length) {
@@ -557,10 +559,10 @@ function formAtendimento(a, opts = {}) {
   };
   const botoes = [];
   // botão direto no chamado: "voltou do setor" (qualquer técnico pode reabrir)
-  if (!novo && !ant && a.smax && PODE_REABRIR.includes(a.status)) botoes.push({ t: '↺ Chamado voltou: reabrir', fn: async () => {
+  if (!novo && !ant && a.smax && PODE_REABRIR.includes(a.status || '')) botoes.push({ t: '↺ Chamado voltou: reabrir', fn: async () => {
     let ult = a;
     try { ult = (await smaxDuplicado(a.smax, null)) || a; } catch (e) { toast(e.message, true); return false; }
-    if (!PODE_REABRIR.includes(ult.status)) { toast(`Este chamado já tem uma ida mais nova (${ult.status}${ult.ida > 1 ? ', ' + ordinal(ult.ida) : ''}). Abra a mais recente.`, true); return false; }
+    if (!PODE_REABRIR.includes(ult.status || '')) { toast(`Este chamado já tem uma ida mais nova (${ult.status}${ult.ida > 1 ? ', ' + ordinal(ult.ida) : ''}). Abra a mais recente.`, true); return false; }
     setTimeout(() => formAtendimento(null, { reabrir: ult }), 0); return true;
   } });
   if (!novo && podeEditar) botoes.push({ t: 'Excluir', danger: true, fn: async () => {
@@ -585,6 +587,10 @@ function formAtendimento(a, opts = {}) {
       const v = s(f.smax.value); if (!v || (!novo && v === a.smax)) return erroBox($('#e', ov), '');
       const dup = await smaxDuplicado(v, a.id).catch(() => null);
       if (dup) avisoDuplicado($('#e', ov), dup, ov); else erroBox($('#e', ov), '');
+    });
+    if (podeEditar) f.encaminhado_para.addEventListener('change', () => {
+      const sg = $('.seg[data-name=status]', f);
+      if (f.encaminhado_para.value && !$('button.on', sg)) $('button[data-v="ENCAMINHADO"]', sg).classList.add('on');
     });
     const atualizaDur = () => { const d = duracao(f.inicio.value, f.termino.value); $('#dur', ov).textContent = d ? `Tempo de atendimento: ${d}` : ''; };
     $$('[data-agora]', f).forEach(b => b.onclick = () => { f[b.dataset.agora].value = agoraLocal(); atualizaDur(); });
@@ -652,7 +658,7 @@ async function smaxDuplicado(smax, idAtual) {
   return l[0] || null;
 }
 function avisoDuplicado(el, dup, ov) {
-  const reabre = PODE_REABRIR.includes(dup.status);
+  const reabre = PODE_REABRIR.includes(dup.status || '');
   el.innerHTML = `<div class="err">O chamado SMAX <b>${esc(dup.smax)}</b> já foi registrado por <b>${esc(nomeDe(dup.uid, dup.tecnico))}</b>
     em ${fmtData(dup.data_ref)} (${esc(dup.status || 'sem status')}${dup.encaminhado_para ? ' para ' + esc(dup.encaminhado_para) : ''}${dup.ida > 1 ? ', ' + ordinal(dup.ida) : ''}).
     ${reabre ? 'Se o setor devolveu o chamado, reabra: ele continua sendo o mesmo chamado e esta nova ida conta como mais um atendimento.' : 'Atualize o registro existente em vez de criar outro.'}
