@@ -89,10 +89,16 @@ export const api = {
   atualizarUsuario: tentar(async (uid, dados) => { await updateDoc(doc(db, 'usuarios', uid), dados); }),
 
   // ---------- atendimentos
+  // chamados com alguma ida no mês ("mes" = ida atual; "meses" = todas as idas)
   listarAtendimentos: tentar(async ({ mes, uid }) => {
-    const f = [where('mes', '==', mes)];
-    if (uid) f.push(where('uid', '==', uid));
-    return lista(await getDocs(query(col('atendimentos'), ...f)));
+    const [a, b] = await Promise.all([
+      getDocs(query(col('atendimentos'), where('mes', '==', mes))),
+      getDocs(query(col('atendimentos'), where('meses', 'array-contains', mes))),
+    ]);
+    const m = new Map(); [...lista(a), ...lista(b)].forEach(x => m.set(x.id, x));
+    let l = [...m.values()];
+    if (uid) l = l.filter(x => x.uid === uid || (Array.isArray(x.uids) && x.uids.includes(uid)));
+    return l;
   }),
   // usado para não deixar registrar o mesmo chamado SMAX duas vezes
   buscarPorSmax: tentar(async smax => lista(await getDocs(query(col('atendimentos'), where('smax', '==', String(smax).trim()))))),
@@ -102,8 +108,8 @@ export const api = {
   transferirAtendimentos: tentar(async itens => {
     for (let i = 0; i < itens.length; i += 400) {
       const b = writeBatch(db);
-      for (const { id, uid, tecnico, historico } of itens.slice(i, i + 400))
-        b.update(doc(db, 'atendimentos', id), { uid, tecnico, historico, atualizado_em: serverTimestamp() });
+      for (const { id, uid, tecnico, historico, uids } of itens.slice(i, i + 400))
+        b.update(doc(db, 'atendimentos', id), { uid, tecnico, historico, ...(uids ? { uids } : {}), atualizado_em: serverTimestamp() });
       await b.commit();
     }
   }),
@@ -135,6 +141,8 @@ export const api = {
   marcarDevolvido: tentar(async (id, { status, devolucao, historico }) => {
     await updateDoc(doc(db, 'atendimentos', id), { status, devolucao, historico, atualizado_em: serverTimestamp() });
   }),
+  // grava o registro inteiro (usado ao juntar chamados do formato antigo)
+  substituirAtendimento: tentar(async (id, dados) => { await setDoc(doc(db, 'atendimentos', id), { ...dados, atualizado_em: serverTimestamp() }); }),
   excluirAtendimento: tentar(async id => { await deleteDoc(doc(db, 'atendimentos', id)); }),
 
   // importação: grava com id fixo (não duplica se importar o mesmo arquivo de novo)

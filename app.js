@@ -1,5 +1,5 @@
 /* Sistema de Atendimentos — Field (site estático + Firebase) */
-import { api } from './firebase.js?v=20261016c';
+import { api } from './firebase.js?v=20261016d';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -381,6 +381,7 @@ async function telaAtendimentos(main) {
         <button class="btn" id="exp">Exportar Excel</button>
         <button class="btn primary" id="novo">+ Novo atendimento</button>
       </div></div>
+    <div id="migr"></div>
     <div class="kpis" id="kpis"></div>
     <div class="toolbar">
       <input type="month" id="fMes" value="${S.mes}" aria-label="Mês">
@@ -411,7 +412,7 @@ async function telaAtendimentos(main) {
   // lista de dias do mês com a quantidade de registros de cada um
   function opcoesDias() {
     const [y, m] = S.mes.split('-').map(Number), n = new Date(y, m, 0).getDate();
-    const cont = {}; base.forEach(a => { cont[a.data_ref] = (cont[a.data_ref] || 0) + 1; });
+    const cont = {}; explodir(base, S.mes).forEach(a => { cont[a.data_ref] = (cont[a.data_ref] || 0) + 1; });
     const sem = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
     let html = '<option value="">Todos os dias</option>';
     for (let d = 1; d <= n; d++) {
@@ -424,7 +425,7 @@ async function telaAtendimentos(main) {
     opcoesDias();
     const q = S.filtros.q.trim().toLowerCase();
     let lista = base;
-    if (S.filtros.dia) lista = lista.filter(a => a.data_ref === S.filtros.dia);
+    if (S.filtros.dia) lista = lista.filter(a => explodir([a]).some(x => x.data_ref === S.filtros.dia));
     if (S.filtros.status) lista = lista.filter(a => a.status === S.filtros.status);
     if (q) lista = lista.filter(a => [a.smax, a.comarca, a.ticket_softplan, a.usuario_atendido, a.obs].some(v => (v || '').toLowerCase().includes(q)));
     const c = k => lista.filter(a => a.status === k).length;
@@ -435,61 +436,137 @@ async function telaAtendimentos(main) {
       <div class="kpi fech"><span>Fechado</span><b>${c('FECHADO')}</b></div>
       ${c('DEVOLVIDO') ? `<div class="kpi dev" title="Chamados que o setor devolveu e foram reabertos"><span>Devolvido</span><b>${c('DEVOLVIDO')}</b></div>` : ''}
       <div class="kpi"><span>Home / Local</span><b>${lista.filter(a => a.home_local === 'HOME').length} / ${lista.filter(a => a.home_local === 'LOCAL').length}</b></div>
-      <div class="kpi tot"><span>Total</span><b>${lista.length}</b></div>`;
+      <div class="kpi tot"><span>Chamados</span><b>${lista.length}</b>${lista.some(a => numIdas(a) > 1) ? `<small class="fora">${lista.reduce((t, a) => t + numIdas(a), 0)} idas no total</small>` : ''}</div>`;
     if (!lista.length) {
       $('#tab').innerHTML = `<div class="empty">Nenhum atendimento ${S.filtros.dia ? 'em ' + fmtData(S.filtros.dia) : 'em ' + esc(nomeMes(S.mes))}${q || S.filtros.status ? ' com esses filtros' : ''}.<br><br><button class="btn primary" id="novo2">+ Registrar atendimento</button></div>`;
       $('#novo2').onclick = () => formAtendimento(null); return;
     }
     const mostraTec = S.filtros.tecnico !== S.perfil.id;
     $('#tab').innerHTML = `<table><thead><tr>
-      <th>Solicitação SMAX</th><th>Comarca</th><th>Início</th><th>Término</th><th class="num">Tempo</th><th>Ticket Softplan</th><th>Status</th><th>Encaminhado p/</th><th>Home/Local</th>${mostraTec ? '<th>Técnico</th>' : ''}</tr></thead>
-      <tbody>${lista.map(a => `<tr class="click" data-id="${esc(a.id)}">
-        <td class="mono"><b>${esc(a.smax) || '<span class="muted">—</span>'}</b>${a.ida > 1 ? ` <span class="tag-ida" title="Chamado devolvido e reaberto">${ordinal(a.ida)}</span>` : ''}</td>
-        <td>${esc(a.comarca)}</td><td>${fmtDH(a.inicio)}</td><td>${fmtDH(a.termino)}</td>
-        <td class="num">${duracao(a.inicio, a.termino)}</td><td class="mono">${esc(a.ticket_softplan)}</td>
+      <th>Solicitação SMAX</th><th>Comarca</th><th>Início</th><th>Término</th><th class="num" title="Soma das idas do chamado">Tempo</th><th>Ticket Softplan</th><th>Status</th><th>Encaminhado p/</th><th>Home/Local</th>${mostraTec ? '<th>Técnico</th>' : ''}</tr></thead>
+      <tbody>${lista.map(a => { const fe = idasFechadas(a), ini = fe.length ? fe[0].inicio : a.inicio, tm = minutosChamado(a), nomes = unicos([...fe.map(x => nomeDe(x.uid, x.tecnico)), nomeDe(a.uid, a.tecnico)]);
+        return `<tr class="click ${fe.length ? 'com-idas' : ''}" data-id="${esc(a.id)}">
+        <td class="mono"><b>${esc(a.smax) || '<span class="muted">—</span>'}</b>${fe.length ? ` <span class="idas" title="Chamado voltou do setor">↺ ${fe.length + 1} idas</span>` : a.ida > 1 ? ` <span class="tag-ida" title="Formato antigo">${ordinal(a.ida)}</span>` : ''}</td>
+        <td>${esc(a.comarca)}</td><td>${fmtDH(ini)}</td><td>${fmtDH(a.termino)}</td>
+        <td class="num">${fe.length ? `<b>${fmtHM(tm)}</b>` : duracao(a.inicio, a.termino)}</td><td class="mono">${esc(a.ticket_softplan)}</td>
         <td>${chip(a.status)}</td><td>${a.encaminhado_para ? `<span class="tag">${esc(a.encaminhado_para)}</span>` : ''}</td>
-        <td>${esc(a.home_local)}</td>${mostraTec ? `<td>${esc(nomeDe(a.uid, a.tecnico))}${marcaDesligado(a.uid)}</td>` : ''}
-      </tr>`).join('')}</tbody></table>`;
+        <td>${esc(a.home_local)}</td>${mostraTec ? `<td>${nomes.map(esc).join(' → ')}${marcaDesligado(a.uid)}</td>` : ''}
+      </tr>`; }).join('')}</tbody></table>`;
     $$('#tab tr[data-id]').forEach(tr => tr.onclick = () => formAtendimento(lista.find(a => a.id === tr.dataset.id)));
   }
   S.recarregar = carregar;
   carregar();
+  if (admin) avisoFormatoAntigo();
+}
+
+// ---------- conversão: chamados reabertos no formato antigo (um registro por ida) viram um chamado só
+function cadeiasAntigas(todos) {
+  const porId = new Map(todos.map(x => [x.id, x])), grupos = new Map();
+  todos.filter(x => x.origem && porId.has(x.origem)).forEach(x => { (grupos.get(x.origem) || grupos.set(x.origem, []).get(x.origem)).push(x); });
+  return [...grupos.entries()].map(([orig, l]) => [porId.get(orig), ...l.sort((a, b) => (a.ida || 1) - (b.ida || 1) || (a.inicio || '').localeCompare(b.inicio || ''))]);
+}
+async function avisoFormatoAntigo() {
+  if (S.migrVisto) return; S.migrVisto = true;
+  let todos; try { todos = await api.listarTodosAtendimentos(); } catch { return; }
+  const cad = cadeiasAntigas(todos); const el = $('#migr'); if (!cad.length || !el) return;
+  el.innerHTML = `<div class="aviso-migr"><div><b>${cad.length} chamado(s) reaberto(s) ainda estão no formato antigo</b> (uma linha por ida): ${cad.slice(0, 6).map(c => esc(c[0].smax)).join(', ')}${cad.length > 6 ? '…' : ''}.<br><span class="hint">Juntar deixa cada um como um chamado só, com as idas dentro. Horários, técnicos e histórico são mantidos.</span></div>
+    <button class="btn primary sm" id="btnMigr">Juntar agora</button></div>`;
+  $('#btnMigr').onclick = async () => {
+    if (!confirm(`Juntar ${cad.length} chamado(s)? Cada um vira um registro só, com as idas dentro.`)) return;
+    try { for (const c of cad) await juntarCadeia(c); toast(`${cad.length} chamado(s) juntados.`); el.innerHTML = ''; refresh(); }
+    catch (e) { toast(e.message, true); }
+  };
+}
+async function juntarCadeia(cad) {
+  const idas = cad.slice(0, -1).map((x, i) => {
+    const prox = cad[i + 1], enc = {};
+    CAMPOS_IDA.forEach(k => { enc[k] = x[k] ?? ''; });
+    if (x.status === 'DEVOLVIDO') { const h = [...(x.historico || [])].reverse().find(e => e.para === 'DEVOLVIDO'); enc.status = (h && h.de) || 'ENCAMINHADO'; }
+    enc.devolucao = x.devolucao || { setor: x.encaminhado_para || '', motivo: 'não informado', em: prox.inicio || '', por: prox.tecnico || '' };
+    return enc;
+  });
+  const ult = cad[cad.length - 1], novo = {};
+  Object.keys(ult).forEach(k => { if (!['id', 'ida', 'origem', 'devolucao', 'criado_em', 'atualizado_em', 'idas', 'meses', 'uids'].includes(k)) novo[k] = ult[k]; });
+  novo.smax = cad[0].smax; novo.idas = idas;
+  novo.historico = cad.flatMap(x => x.historico || []).sort((a, b) => (a.em || '').localeCompare(b.em || '')).slice(-300);
+  novo.meses = mesesDe(idas, novo); novo.uids = uidsDe(idas, novo);
+  if (cad[0].criado_em) novo.criado_em = cad[0].criado_em;
+  await api.substituirAtendimento(cad[0].id, novo);
+  for (const x of cad.slice(1)) await api.excluirAtendimento(x.id);
 }
 const desligado = uid => !!((S.usuarios || []).find(x => x.id === uid) || {}).desligado;
 const marcaDesligado = uid => desligado(uid) ? ' <span class="tag-deslig">desligado</span>' : '';
 function nomeDe(uid, reserva) { const u = (S.usuarios || []).find(x => x.id === uid); return u ? u.nome : (reserva || '—'); }
 
+// ---------- idas de um chamado
+// Um chamado = um registro. Os campos de cima são a ida ATUAL; as idas anteriores ficam em "idas" (travadas).
+const CAMPOS_IDA = ['uid', 'tecnico', 'inicio', 'termino', 'status', 'encaminhado_para', 'home_local', 'agendamento', 'usuario_atendido', 'obs', 'data_ref', 'mes'];
+const idasFechadas = doc => Array.isArray(doc.idas) ? doc.idas : [];
+const numIdas = doc => idasFechadas(doc).length + 1;
+const parado = ida => { const de = ida.termino || ida.inicio, ate = ida.devolucao && ida.devolucao.em; if (!de || !ate) return null; const m = Math.round((new Date(ate) - new Date(de)) / 60000); return isNaN(m) || m < 0 ? null : m; };
+// transforma cada chamado em uma linha por ida (é assim que o painel conta)
+function explodir(docs, mes) {
+  const out = [];
+  docs.forEach(doc => {
+    const base = { smax: doc.smax, comarca: doc.comarca, ticket_softplan: doc.ticket_softplan, id: doc.id, _doc: doc };
+    idasFechadas(doc).forEach((x, i) => out.push({ ...base, ...x, _ida: i + 1, _fechada: true, _statusOrig: x.status, status: x.devolucao ? 'DEVOLVIDO' : x.status }));
+    out.push({ ...doc, _doc: doc, _ida: idasFechadas(doc).length + (doc.ida || 1) });
+  });
+  return mes ? out.filter(x => x.mes === mes) : out;
+}
+const unicos = l => [...new Set(l.filter(Boolean))];
+const mesesDe = (idas, at) => unicos([...idas.map(x => x.mes), at.mes]);
+const uidsDe = (idas, at) => unicos([...idas.map(x => x.uid), at.uid]);
+function minutosChamado(doc) { return explodir([doc]).map(minutosDe).filter(m => m !== null).reduce((t, m) => t + m, 0); }
+const fmtHM = m => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+function blocoIdas(doc, encerrando) {
+  const fech = idasFechadas(doc); if (!fech.length && !encerrando) return '';
+  const tAt = minutosChamado(doc), tPar = fech.map(parado).filter(m => m !== null).reduce((t, m) => t + m, 0);
+  const linhaIda = (x, n, atual) => { const m = minutosDe(x); return `<div class="etapa ${atual ? 'atual' : ''}"><div class="n">${n}</div><div>
+      <b>${esc(nomeDe(x.uid, x.tecnico))}</b>${x.home_local ? ' · ' + esc(x.home_local) : ''} <span class="lock">${encerrando && x === doc ? '🔒 vai ser encerrada agora' : atual ? '✏️ ida atual (editar abaixo)' : '🔒 encerrada'}</span>
+      <small>${fmtDH(x.inicio) || 'sem horário'}${x.termino ? ' → ' + esc((x.termino || '').slice(11, 16)) : ''} · ${chip(x.status)}${x.encaminhado_para ? ` para <span class="tag">${esc(x.encaminhado_para)}</span>` : ''}</small>
+      ${x.obs ? `<small>Obs.: ${esc(x.obs)}</small>` : ''}</div><div class="t">${m !== null ? fmtHM(m) : '—'}<small>${x.status === 'TENT CONTATO' ? 'tentativa' : 'atendimento'}</small></div></div>`; };
+  const gap = x => { const p = parado(x), d = x.devolucao || {}; return `<div class="setor">⏳ <b>No setor ${esc(d.setor || x.encaminhado_para || '')}${p !== null ? ' por ' + fmtMin(p) : ''}</b>${d.em ? ` · devolvido em ${fmtDH(d.em)}` : ''} · não conta nas horas do técnico${d.motivo ? `<br>Motivo: <b>"${esc(d.motivo)}"</b>` : ''}</div>`; };
+  return `<div class="resumo"><div><span>Status atual</span><b>${chip(doc.status)}</b></div><div><span>Tempo de atendimento</span><b>${fmtHM(tAt)}</b></div>
+      <div><span>Parado nos setores</span><b style="color:var(--st-dev)">${tPar ? fmtMin(tPar) : '—'}</b></div><div><span>Idas</span><b>${fech.length + 1}</b></div></div>
+    <div class="sec">Idas do chamado</div><div class="etapas">${fech.map((x, i) => linhaIda(x, i + 1) + gap(x)).join('')}${linhaIda(doc, fech.length + 1, !encerrando)}</div>
+    ${encerrando ? '' : `<div class="sec">Ida atual (${ordinal(fech.length + 1)})</div>`}`;
+}
+
 function formAtendimento(a, opts = {}) {
-  const ant = opts.reabrir || null;    // registro anterior, quando o chamado voltou do setor
+  const chamado = opts.novaIda ? a : null;   // chamado que voltou do setor: vai ganhar uma ida nova
   const novo = !a;
-  a = a || (ant ? { inicio: agoraLocal(), status: '', home_local: '', uid: S.perfil.id, smax: ant.smax, comarca: ant.comarca, ticket_softplan: ant.ticket_softplan, usuario_atendido: ant.usuario_atendido }
-                : { inicio: agoraLocal(), status: '', home_local: '', uid: S.perfil.id });
-  const ida = ant ? (ant.ida || 1) + 1 : (a.ida || 1);
+  const fech = chamado ? idasFechadas(chamado) : (a ? idasFechadas(a) : []);
+  if (chamado) a = { inicio: agoraLocal(), status: '', home_local: '', uid: S.perfil.id, smax: chamado.smax, comarca: chamado.comarca, ticket_softplan: chamado.ticket_softplan, usuario_atendido: chamado.usuario_atendido };
+  a = a || { inicio: agoraLocal(), status: '', home_local: '', uid: S.perfil.id };
+  const ida = chamado ? fech.length + 2 : fech.length + (a.ida || 1);
   const admin = isAdmin();
-  const podeEditar = novo || admin || a.uid === S.perfil.id;
+  const podeEditar = novo || !!chamado || admin || a.uid === S.perfil.id;
   const dis = podeEditar ? '' : 'disabled';
   const equipe = S.usuarios.filter(u => u.ativo || u.id === a.uid).sort((x, y) => x.nome.localeCompare(y.nome));
   const comarcas = listaComarcas().length ? listaComarcas() : [...new Set((S.comarcas || []).map(tituloComarca))].sort();
   const body = `<form id="fa" novalidate>
     <div id="e"></div>
-    ${ant ? `<fieldset class="devol"><legend>Chamado devolvido · ${ordinal(ida)}</legend>
-      <p class="hint" style="margin-top:0">A ida anterior (${fmtData(ant.data_ref)}, ${esc(nomeDe(ant.uid, ant.tecnico))}, ${esc(ant.status)}${ant.encaminhado_para ? ' para ' + esc(ant.encaminhado_para) : ''}) vai ficar como <b>DEVOLVIDO</b>. Este registro é a nova ida: conta como mais um atendimento, com o seu horário.</p>
+    ${chamado ? `<fieldset class="devol"><legend>Chamado voltou do setor · ${ordinal(ida)}</legend>
+      <p class="hint" style="margin-top:0">A ida atual (${fmtData(chamado.data_ref)}, ${esc(nomeDe(chamado.uid, chamado.tecnico))}, ${esc(chamado.status || 'sem status')}${chamado.encaminhado_para ? ' para ' + esc(chamado.encaminhado_para) : ''}) vai ser encerrada e travada. Abaixo você registra a <b>${ordinal(ida)}</b>: conta como mais um atendimento, com o seu horário, no mesmo chamado.</p>
       <div class="row">
-        <label class="f"><span>Devolvido por</span><select name="dev_setor">${ENCAMINHADO_PARA.map(x => `<option ${ant.encaminhado_para === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+        <label class="f"><span>Devolvido por</span><select name="dev_setor">${ENCAMINHADO_PARA.map(x => `<option ${chamado.encaminhado_para === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
         <label class="f"><span>Motivo da devolução <em>*</em></span><input type="text" name="dev_motivo" list="dlMotivos" maxlength="200" autocomplete="off" placeholder="Escreva o motivo (ou escolha uma sugestão)">
           <datalist id="dlMotivos">${MOTIVOS_DEVOLUCAO.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
-      </div></fieldset>` : ''}
-    ${!novo && ida > 1 ? `<p class="hint" style="margin-top:0"><span class="tag-ida">${ordinal(ida)}</span> Este chamado foi devolvido pelo setor e reaberto.</p>` : ''}
-    ${!podeEditar ? `<div class="err" style="background:var(--brand-soft);color:var(--brand)">Atendimento de ${esc(nomeDe(a.uid, a.tecnico))}. Só ele ou o líder podem alterar.</div>` : ''}
-    ${admin ? `<label class="f"><span>Técnico</span><select name="uid">${equipe.map(t => `<option value="${t.id}" ${a.uid === t.id ? 'selected' : ''}>${esc(t.nome)}</option>`).join('')}</select></label>` : ''}
+      </div>
+      <div class="row"><label class="f"><span>Devolvido em</span><input type="datetime-local" name="dev_em" value="${agoraLocal()}"></label><div class="hint" style="align-self:center">Usado para calcular quanto tempo o chamado ficou parado no setor.</div></div></fieldset>
+      ${blocoIdas(chamado, true)}<div class="sec">Nova ida (${ordinal(ida)})</div>` : ''}
+    ${!novo && !chamado ? blocoIdas(a) : ''}
+    ${!podeEditar ? `<div class="err" style="background:var(--brand-soft);color:var(--brand)">Ida de ${esc(nomeDe(a.uid, a.tecnico))}. Só ele ou o líder podem alterar.${PODE_REABRIR.includes(a.status || '') ? ' Se o chamado voltou do setor, use “Chamado voltou: nova ida”.' : ''}</div>` : ''}
+    ${admin ? `<label class="f"><span>Técnico${fech.length || chamado ? ' desta ida' : ''}</span><select name="uid">${equipe.map(t => `<option value="${t.id}" ${a.uid === t.id ? 'selected' : ''}>${esc(t.nome)}</option>`).join('')}</select></label>` : ''}
     <div class="row">
-      <label class="f"><span>Solicitação SMAX <em>*</em></span><input type="text" name="smax" value="${esc(a.smax)}" placeholder="ex.: 1234567" inputmode="numeric" ${dis}></label>
+      <label class="f"><span>Solicitação SMAX <em>*</em></span><input type="text" name="smax" value="${esc(a.smax)}" placeholder="ex.: 1234567" inputmode="numeric" ${dis} ${chamado || fech.length ? 'readonly' : ''}></label>
       <label class="f"><span>Comarca <em>*</em></span><input type="text" name="comarca" value="${esc(a.comarca)}" list="dlComarcas" autocomplete="off" placeholder="Comece a digitar e escolha na lista" ${dis}></label>
     </div>
     <datalist id="dlComarcas">${comarcas.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <div class="row">
-      <label class="f"><span>Início do atendimento</span><div class="with-btn"><input type="datetime-local" name="inicio" value="${esc(a.inicio)}" ${dis}><button type="button" class="btn sm" data-agora="inicio" ${dis}>Agora</button></div></label>
-      <label class="f"><span>Término do atendimento</span><div class="with-btn"><input type="datetime-local" name="termino" value="${esc(a.termino)}" ${dis}><button type="button" class="btn sm" data-agora="termino" ${dis}>Agora</button></div><div class="hint" id="dur"></div></label>
+      <label class="f"><span>Início ${chamado || fech.length ? 'desta ida' : 'do atendimento'}</span><div class="with-btn"><input type="datetime-local" name="inicio" value="${esc(a.inicio)}" ${dis}><button type="button" class="btn sm" data-agora="inicio" ${dis}>Agora</button></div></label>
+      <label class="f"><span>Término ${chamado || fech.length ? 'desta ida' : 'do atendimento'}</span><div class="with-btn"><input type="datetime-local" name="termino" value="${esc(a.termino)}" ${dis}><button type="button" class="btn sm" data-agora="termino" ${dis}>Agora</button></div><div class="hint" id="dur"></div></label>
     </div>
     <div class="row">
       <label class="f"><span>Ticket Softplan</span><input type="text" name="ticket_softplan" value="${esc(a.ticket_softplan)}" ${dis}></label>
@@ -503,25 +580,24 @@ function formAtendimento(a, opts = {}) {
         <label class="f"><span>Usuário (quem será atendido)</span><input type="text" name="usuario_atendido" value="${esc(a.usuario_atendido)}" ${dis}></label>
       </div>
     </fieldset>
-    <label class="f"><span>Observações gerais</span><textarea name="obs" rows="2" ${dis}>${esc(a.obs)}</textarea></label>
+    <label class="f"><span>Observações ${chamado || fech.length ? 'desta ida' : 'gerais'}</span><textarea name="obs" rows="2" ${dis}>${esc(a.obs)}</textarea></label>
     <fieldset class="hist">
       <legend>Histórico de status</legend>
-      ${podeEditar ? `<label class="f"><span>${novo ? 'Observação inicial (opcional)' : 'Observação desta alteração'}</span>
+      ${podeEditar ? `<label class="f"><span>${novo || chamado ? 'Observação inicial (opcional)' : 'Observação desta alteração'}</span>
         <textarea name="obs_alteracao" rows="2" placeholder="${novo ? 'Ex.: usuário relatou que a impressora não liga.' : 'Ex.: usuário não atendeu, liguei no ramal 2; agendado para amanhã às 9h.'}"></textarea>
         <div class="hint">Fica registrado no histórico com data, hora e o seu nome. ${novo ? '' : 'Mudou o status? Explique aqui o motivo.'}</div></label>` : ''}
-      ${linhaDoTempo(a.historico)}
+      ${linhaDoTempo((chamado || a).historico)}
     </fieldset>
-    ${!novo ? `<p class="hint">Registrado por ${esc(nomeDe(a.uid, a.tecnico))}</p>` : ''}
+    ${!novo && !chamado ? `<p class="hint">Ida atual registrada por ${esc(nomeDe(a.uid, a.tecnico))}</p>` : ''}
   </form>`;
   const salvar = async ov => {
     const f = $('#fa', ov); const d = Object.fromEntries(new FormData(f));
     $$('.seg', f).forEach(sg => { const on = $('button.on', sg); d[sg.dataset.name] = on ? on.dataset.v : ''; });
     if (d.status !== 'AGENDADO') { d.agendamento = d.agendamento || ''; }
-    const uid = admin && d.uid ? d.uid : (a.uid || S.perfil.id);
+    if (chamado) { d.dev_motivo = s(d.dev_motivo).slice(0, 200); if (!d.dev_motivo) { erroBox($('#e', ov), 'Escreva o motivo da devolução.'); ov.scrollTop = 0; f.dev_motivo.focus(); return false; } }
+    const uid = admin && d.uid ? d.uid : (chamado ? S.perfil.id : (a.uid || S.perfil.id));
     const at = montarAtendimento(d, uid, nomeDe(uid, S.perfil.nome));
-    if (ant) { at.ida = ida; at.origem = ant.origem || ant.id; at.smax = ant.smax; }
-    else if (!novo && a.ida) { at.ida = a.ida; if (a.origem) at.origem = a.origem; }
-    if (ant) { d.dev_motivo = s(d.dev_motivo).slice(0, 200); if (!d.dev_motivo) { erroBox($('#e', ov), 'Escreva o motivo da devolução.'); ov.scrollTop = 0; f.dev_motivo.focus(); return false; } }
+    if (chamado || fech.length) at.smax = (chamado || a).smax;
     const er = validar(at); if (er) { erroBox($('#e', ov), er); ov.scrollTop = 0; return false; }
     // comarca: só aceita da lista oficial (grava sempre com o nome padronizado)
     if (listaComarcas().length) {
@@ -530,48 +606,48 @@ function formAtendimento(a, opts = {}) {
       at.comarca = ofi;
     } else at.comarca = tituloComarca(at.comarca);
     // não deixa registrar o mesmo número de chamado SMAX duas vezes
-    if (at.smax && !ant && (novo || at.smax !== a.smax)) {
+    if (at.smax && !chamado && (novo || at.smax !== a.smax)) {
       const dup = await smaxDuplicado(at.smax, a.id);
       if (dup) { avisoDuplicado($('#e', ov), dup, ov); ov.scrollTop = 0; return false; }
     }
-    // histórico: guarda criação, mudança de status e observações da alteração
     const obsAlt = s(d.obs_alteracao).slice(0, 1000);
-    const hist = Array.isArray(a.historico) ? [...a.historico] : [];
-    const devTxt = ant ? `Devolvido por ${d.dev_setor} (${d.dev_motivo})` : '';
-    if (novo) hist.push({ em: agoraLocal(), por: S.perfil.nome, de: '', para: at.status, obs: [ant ? `${ordinal(ida)} — ${devTxt}` : '', obsAlt].filter(Boolean).join('. ') });
-    else if (at.status !== (a.status || '') || obsAlt) hist.push({ em: agoraLocal(), por: S.perfil.nome, de: a.status || '', para: at.status, obs: obsAlt });
+    const agora = agoraLocal();
+    let idas = fech, hist = Array.isArray((chamado || a).historico) ? [...(chamado || a).historico] : [];
+    if (chamado) {
+      // encerra a ida atual (fica travada) e abre a nova
+      const enc = {}; CAMPOS_IDA.forEach(k => { enc[k] = chamado[k] ?? ''; });
+      enc.devolucao = { setor: d.dev_setor, motivo: d.dev_motivo, em: normDataHora(d.dev_em) || agora, por: S.perfil.nome };
+      idas = [...fech, enc];
+      hist.push({ em: agora, por: S.perfil.nome, de: chamado.status || '', para: at.status, obs: [`${ordinal(ida)} — devolvido por ${d.dev_setor} (${d.dev_motivo})`, obsAlt].filter(Boolean).join('. ') });
+    } else if (novo) hist.push({ em: agora, por: S.perfil.nome, de: '', para: at.status, obs: obsAlt });
+    else if (at.status !== (a.status || '') || obsAlt) hist.push({ em: agora, por: S.perfil.nome, de: a.status || '', para: at.status, obs: obsAlt });
     at.historico = hist.slice(-300);
+    if (idas.length) at.idas = idas;
+    at.meses = mesesDe(idas, at); at.uids = uidsDe(idas, at);
     try {
-      await api.salvarAtendimento(novo ? null : a.id, at);
-      if (ant) {
-        const em = agoraLocal();
-        await api.marcarDevolvido(ant.id, {
-          status: 'DEVOLVIDO',
-          devolucao: { setor: d.dev_setor, motivo: d.dev_motivo, em, por: S.perfil.nome },
-          historico: [...(Array.isArray(ant.historico) ? ant.historico : []), { em, por: S.perfil.nome, de: ant.status || '', para: 'DEVOLVIDO', obs: [devTxt, obsAlt].filter(Boolean).join('. ') }].slice(-300),
-        });
-      }
-      toast(ant ? `Chamado reaberto (${ordinal(ida)}).` : novo ? 'Atendimento registrado.' : 'Atendimento atualizado.');
+      await api.salvarAtendimento(novo ? null : (chamado || a).id, at);
+      toast(chamado ? `${ordinal(ida)} registrada no chamado ${at.smax}.` : novo ? 'Atendimento registrado.' : 'Atendimento atualizado.');
       if (at.mes !== S.mes && novo) toast(`Registrado em ${nomeMes(at.mes)} (data do início).`);
       S.comarcas = [at.comarca, ...(S.comarcas || [])];
       refresh(); return true;
     } catch (e) { erroBox($('#e', ov), e.message); ov.scrollTop = 0; return false; }
   };
   const botoes = [];
-  // botão direto no chamado: "voltou do setor" (qualquer técnico pode reabrir)
-  if (!novo && !ant && a.smax && PODE_REABRIR.includes(a.status || '')) botoes.push({ t: '↺ Chamado voltou: reabrir', fn: async () => {
-    let ult = a;
-    try { ult = (await smaxDuplicado(a.smax, null)) || a; } catch (e) { toast(e.message, true); return false; }
-    if (!PODE_REABRIR.includes(ult.status || '')) { toast(`Este chamado já tem uma ida mais nova (${ult.status}${ult.ida > 1 ? ', ' + ordinal(ult.ida) : ''}). Abra a mais recente.`, true); return false; }
-    setTimeout(() => formAtendimento(null, { reabrir: ult }), 0); return true;
-  } });
-  if (!novo && podeEditar) botoes.push({ t: 'Excluir', danger: true, fn: async () => {
-    if (!confirm('Excluir este atendimento? Essa ação não pode ser desfeita.')) return false;
+  const dono = admin || a.uid === S.perfil.id;
+  if (!novo && !chamado && dono && (admin || !fech.length)) botoes.push({ t: 'Excluir', danger: true, fn: async () => {
+    if (!confirm(fech.length ? `Excluir o chamado inteiro (${fech.length + 1} idas)? Essa ação não pode ser desfeita.` : 'Excluir este atendimento? Essa ação não pode ser desfeita.')) return false;
     try { await api.excluirAtendimento(a.id); toast('Atendimento excluído.'); refresh(); return true; } catch (e) { toast(e.message, true); return false; }
   } });
-  if (podeEditar) botoes.push({ t: 'Cancelar' }, { t: novo ? 'Registrar' : 'Salvar', primary: true, fn: salvar });
+  // chamado voltou do setor: qualquer técnico pode abrir a próxima ida
+  if (!novo && !chamado && a.smax && PODE_REABRIR.includes(a.status || '')) botoes.push({ t: '↺ Chamado voltou: nova ida', fn: async () => {
+    let ult = a;
+    try { ult = (await smaxDuplicado(a.smax, null)) || a; } catch (e) { toast(e.message, true); return false; }
+    if (!PODE_REABRIR.includes(ult.status || '')) { toast(`Este chamado já tem uma ida mais nova (${ult.status}). Abra a mais recente.`, true); return false; }
+    setTimeout(() => formAtendimento(ult, { novaIda: true }), 0); return true;
+  } });
+  if (podeEditar) botoes.push({ t: 'Cancelar' }, { t: novo ? 'Registrar' : chamado ? `Registrar ${ordinal(ida)}` : 'Salvar', primary: true, fn: salvar });
   else botoes.push({ t: 'Fechar', primary: true });
-  modal(ant ? `Reabrir chamado ${esc(ant.smax)}` : novo ? 'Novo atendimento' : `Atendimento ${esc(a.smax || '')}`, body, botoes, '', ov => {
+  modal(chamado ? `Chamado ${esc(chamado.smax)} · nova ida` : novo ? 'Novo atendimento' : `Chamado ${esc(a.smax || '')}${fech.length ? ` <span class="idas">↺ ${fech.length + 1} idas</span>` : ''}`, body, botoes, chamado || fech.length ? 'lg' : '', ov => {
     const f = $('#fa', ov);
     // corrige a comarca para o nome oficial ao sair do campo
     if (podeEditar) f.comarca.addEventListener('change', () => {
@@ -582,8 +658,7 @@ function formAtendimento(a, opts = {}) {
       else f.comarca.value = tituloComarca(v);
     });
     // aviso de chamado duplicado já ao sair do campo SMAX
-    if (ant) f.smax.readOnly = true;
-    if (podeEditar && !ant) f.smax.addEventListener('change', async () => {
+    if (podeEditar && !chamado && !fech.length) f.smax.addEventListener('change', async () => {
       const v = s(f.smax.value); if (!v || (!novo && v === a.smax)) return erroBox($('#e', ov), '');
       const dup = await smaxDuplicado(v, a.id).catch(() => null);
       if (dup) avisoDuplicado($('#e', ov), dup, ov); else erroBox($('#e', ov), '');
@@ -592,7 +667,7 @@ function formAtendimento(a, opts = {}) {
       const sg = $('.seg[data-name=status]', f);
       if (f.encaminhado_para.value && !$('button.on', sg)) $('button[data-v="ENCAMINHADO"]', sg).classList.add('on');
     });
-    const atualizaDur = () => { const d = duracao(f.inicio.value, f.termino.value); $('#dur', ov).textContent = d ? `Tempo de atendimento: ${d}` : ''; };
+    const atualizaDur = () => { const d = duracao(f.inicio.value, f.termino.value); $('#dur', ov).textContent = d ? `Tempo ${chamado || fech.length ? 'desta ida' : 'de atendimento'}: ${d}` : ''; };
     $$('[data-agora]', f).forEach(b => b.onclick = () => { f[b.dataset.agora].value = agoraLocal(); atualizaDur(); });
     f.inicio.oninput = f.termino.oninput = atualizaDur; atualizaDur();
     $$('.seg', f).forEach(sg => $$('button', sg).forEach(b => b.onclick = () => {
@@ -606,6 +681,7 @@ function formAtendimento(a, opts = {}) {
         if (v === 'FECHADO' && !f.termino.value) { f.termino.value = agoraLocal(); atualizaDur(); }
       }
     }));
+    if (chamado) f.dev_motivo.focus();
   });
 }
 function avisoComarca(el, v, ov) {
@@ -659,12 +735,13 @@ async function smaxDuplicado(smax, idAtual) {
 }
 function avisoDuplicado(el, dup, ov) {
   const reabre = PODE_REABRIR.includes(dup.status || '');
-  el.innerHTML = `<div class="err">O chamado SMAX <b>${esc(dup.smax)}</b> já foi registrado por <b>${esc(nomeDe(dup.uid, dup.tecnico))}</b>
-    em ${fmtData(dup.data_ref)} (${esc(dup.status || 'sem status')}${dup.encaminhado_para ? ' para ' + esc(dup.encaminhado_para) : ''}${dup.ida > 1 ? ', ' + ordinal(dup.ida) : ''}).
-    ${reabre ? 'Se o setor devolveu o chamado, reabra: ele continua sendo o mesmo chamado e esta nova ida conta como mais um atendimento.' : 'Atualize o registro existente em vez de criar outro.'}
-    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">${reabre ? '<button type="button" class="btn sm primary" id="reabrirDup">Ele voltou: reabrir chamado</button>' : ''}<button type="button" class="btn sm" id="abrirDup">Abrir registro existente</button></div></div>`;
+  const n = numIdas(dup) + (dup.ida > 1 ? dup.ida - 1 : 0);
+  el.innerHTML = `<div class="err">O chamado SMAX <b>${esc(dup.smax)}</b> já existe: ida atual de <b>${esc(nomeDe(dup.uid, dup.tecnico))}</b>
+    em ${fmtData(dup.data_ref)} (${esc(dup.status || 'sem status')}${dup.encaminhado_para ? ' para ' + esc(dup.encaminhado_para) : ''}${n > 1 ? ', ' + ordinal(n) : ''}).
+    ${reabre ? 'Se o setor devolveu o chamado, registre uma <b>nova ida</b> nele: continua sendo o mesmo chamado e a nova ida conta como mais um atendimento.' : 'Atualize o registro existente em vez de criar outro.'}
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">${reabre ? '<button type="button" class="btn sm primary" id="reabrirDup">↺ Ele voltou: nova ida</button>' : ''}<button type="button" class="btn sm" id="abrirDup">Abrir o chamado</button></div></div>`;
   $('#abrirDup', el).onclick = () => { ov.remove(); formAtendimento(dup); };
-  if (reabre) $('#reabrirDup', el).onclick = () => { ov.remove(); formAtendimento(null, { reabrir: dup }); };
+  if (reabre) $('#reabrirDup', el).onclick = () => { ov.remove(); formAtendimento(dup, { novaIda: true }); };
 }
 // linha do tempo do histórico (mais recente primeiro)
 function linhaDoTempo(h) {
@@ -737,7 +814,7 @@ function montarPainel(mes, lista) {
   const linhas = [...ids].map(uid => {
     const m = lista.filter(a => a.uid === uid); const c = k => m.filter(a => a.status === k).length;
     const r = { uid, nome: nomeDe(uid, (m[0] || {}).tecnico), encaminhado: c('ENCAMINHADO'), tent_contato: c('TENT CONTATO'), agendado: c('AGENDADO'), fechado: c('FECHADO'), devolvido: c('DEVOLVIDO'),
-      reabertos: m.filter(a => a.ida > 1 && contaComoAtendido(a)).length, chamados: new Set(m.filter(contaComoAtendido).map(a => a.smax || a.id)).size,
+      reabertos: m.filter(a => (a._ida || a.ida || 1) > 1 && contaComoAtendido(a)).length, chamados: new Set(m.filter(contaComoAtendido).map(a => a.smax || a.id)).size,
       home: m.filter(a => a.home_local === 'HOME').length, local: m.filter(a => a.home_local === 'LOCAL').length };
     r.total = r.encaminhado + r.agendado + r.fechado + r.devolvido;   // tentativa de contato fica de fora
     tempos(r, m.filter(contaComoAtendido)); temposTent(r, m); return r;
@@ -747,9 +824,9 @@ function montarPainel(mes, lista) {
   const atendidos = lista.filter(contaComoAtendido);
   total.chamados = new Set(atendidos.map(a => a.smax || a.id)).size;
   // devoluções por setor (com os motivos)
-  const dv = {}; lista.filter(a => a.status === 'DEVOLVIDO').forEach(a => { const st = (a.devolucao && a.devolucao.setor) || a.encaminhado_para || 'Sem setor'; const g = dv[st] = dv[st] || { setor: st, n: 0, motivos: {} }; g.n++; const mo = (a.devolucao && a.devolucao.motivo) || 'Sem motivo'; g.motivos[mo] = (g.motivos[mo] || 0) + 1; });
+  const dv = {}; lista.filter(a => a.status === 'DEVOLVIDO').forEach(a => { const st = (a.devolucao && a.devolucao.setor) || a.encaminhado_para || 'Sem setor'; const g = dv[st] = dv[st] || { setor: st, n: 0, motivos: {}, par: [] }; g.n++; const pm = parado(a); if (pm !== null) g.par.push(pm); const mo = (a.devolucao && a.devolucao.motivo) || 'Sem motivo'; g.motivos[mo] = (g.motivos[mo] || 0) + 1; });
   const enviados = {}; atendidos.forEach(a => { if (a.encaminhado_para) enviados[a.encaminhado_para] = (enviados[a.encaminhado_para] || 0) + 1; });
-  const devolucoes = Object.values(dv).map(g => ({ ...g, enviados: enviados[g.setor] || g.n })).sort((a, b) => b.n - a.n);
+  const devolucoes = Object.values(dv).map(g => ({ ...g, enviados: enviados[g.setor] || g.n, parMedio: g.par.length ? Math.round(g.par.reduce((t, x) => t + x, 0) / g.par.length) : null })).sort((a, b) => b.n - a.n);
   tempos(total, atendidos); temposTent(total, lista);
   const destinos = ENCAMINHADO_PARA.map(d => ({ destino: d, n: atendidos.filter(a => a.encaminhado_para === d).length }));
   const cont = {}; atendidos.forEach(a => { if (a.comarca) { const c = nomeComarca(a.comarca); cont[c] = (cont[c] || 0) + 1; } });
@@ -764,7 +841,7 @@ async function telaPainel(main) {
     <div id="pn"><div class="empty">Carregando…</div></div>`;
   $('#fMes').onchange = e => { if (e.target.value) { S.mes = e.target.value; S.painelDia = ''; render(); } };
   $('#exp').onclick = exportarExcel;
-  let lista; try { lista = await api.listarAtendimentos({ mes: S.mes }); } catch (e) { return toast(e.message, true); }
+  let lista; try { lista = explodir(await api.listarAtendimentos({ mes: S.mes }), S.mes); } catch (e) { return toast(e.message, true); }
   S.comarcas = [...new Set([...lista.map(a => a.comarca), ...(S.comarcas || [])])];
   const mesGeral = montarPainel(S.mes, lista);        // lista de técnicos do mês (para os seletores)
   if (S.painelTec && !mesGeral.linhas.some(r => r.uid === S.painelTec)) S.painelTec = '';
@@ -821,9 +898,9 @@ async function telaPainel(main) {
       <div class="graficos">
           <div class="card"><h3>Atendimento SAJ — encaminhados para${filtros ? ` <span class="muted">· ${filtros.replace(/<\/?b>/g, '')}</span>` : ''}</h3><div class="pad bars">${p.destinos.map(d => `<div class="bar"><span>${esc(d.destino)}</span><div class="t"><i style="width:${d.n / maxD * 100}%"></i></div><b>${d.n}</b></div>`).join('')}</div></div>
           ${p.devolucoes.length ? `<div class="card"><h3>Devoluções por setor${filtros ? ` <span class="muted">· ${filtros.replace(/<\/?b>/g, '')}</span>` : ''}</h3><div class="pad">
-            <table class="tab-dev"><thead><tr><th>Setor</th><th class="num">Devolvidos</th><th class="num" title="Devolvidos ÷ encaminhados para o setor no período">Taxa</th><th>Motivos</th></tr></thead><tbody>
-            ${p.devolucoes.map(g => `<tr><td><span class="tag">${esc(g.setor)}</span></td><td class="num"><b>${g.n}</b></td><td class="num">${Math.round(g.n / Math.max(g.n, g.enviados) * 100)}%</td><td class="wrap">${Object.entries(g.motivos).sort((x, y) => y[1] - x[1]).map(([mo, n]) => `${esc(mo)} <span class="muted">${n}</span>`).join(' · ')}</td></tr>`).join('')}
-            </tbody></table><div class="hint" style="margin-top:8px">Taxa = devolvidos ÷ chamados encaminhados para o setor no período.</div></div></div>` : ''}
+            <table class="tab-dev"><thead><tr><th>Setor</th><th class="num">Devolvidos</th><th class="num" title="Devolvidos ÷ encaminhados para o setor no período">Taxa</th><th class="num" title="Do encaminhamento até a devolução">Tempo médio parado</th><th>Motivos</th></tr></thead><tbody>
+            ${p.devolucoes.map(g => `<tr><td><span class="tag">${esc(g.setor)}</span></td><td class="num"><b>${g.n}</b></td><td class="num">${Math.round(g.n / Math.max(g.n, g.enviados) * 100)}%</td><td class="num">${fmtMin(g.parMedio)}</td><td class="wrap">${Object.entries(g.motivos).sort((x, y) => y[1] - x[1]).map(([mo, n]) => `${esc(mo)} <span class="muted">${n}</span>`).join(' · ')}</td></tr>`).join('')}
+            </tbody></table><div class="hint" style="margin-top:8px">Taxa = devolvidos ÷ chamados encaminhados para o setor no período. Tempo parado = do fim da ida até a devolução (não entra nas horas dos técnicos).</div></div></div>` : ''}
           <div class="card"><h3>Comarcas com mais atendimentos${filtros ? ` <span class="muted">· ${filtros.replace(/<\/?b>/g, '')}</span>` : ''}</h3><div class="pad bars">${p.porComarca.length ? p.porComarca.map(d => `<div class="bar"><span title="${esc(d.comarca)}">${esc(d.comarca)}</span><div class="t"><i style="width:${d.n / maxC * 100}%"></i></div><b>${d.n}</b></div>`).join('') : `<div class="muted">Sem dados ${dia ? 'no dia' : 'no mês'}.</div>`}</div></div>
       </div>
       <div class="card cal-card">
@@ -914,9 +991,9 @@ function diaDetalhe(d, l) {
   const { fechar } = modal(`Atendimentos de ${data}`, `
     <p class="hint" style="margin-top:0">${l.length - nTent} atendimento(s)${nTent ? ` + ${nTent} tentativa(s) de contato (fora do total${tt.tent_com_tempo ? `: ${fmtMin(tt.tent_min_total)}, média ${fmtMin(tt.tent_min_medio)}` : ''})` : ''}${min.length ? ` · ${fmtMin(min.reduce((t, x) => t + x, 0))} de atendimento · média ${fmtMin(Math.round(min.reduce((t, x) => t + x, 0) / min.length))}` : ''}</p>
     <div class="tablewrap"><table><thead><tr><th>Início</th><th>SMAX</th><th>Comarca</th><th>Técnico</th><th class="num">Tempo</th><th>Status</th></tr></thead><tbody>
-    ${l.map(a => `<tr class="click" data-id="${esc(a.id)}"><td>${esc((a.inicio || '').slice(11, 16))}</td><td class="mono"><b>${esc(a.smax)}</b></td><td>${esc(a.comarca)}</td><td>${esc(nomeDe(a.uid, a.tecnico))}</td><td class="num">${duracao(a.inicio, a.termino)}</td><td>${chip(a.status)}</td></tr>`).join('')}
+    ${l.map((a, i) => `<tr class="click" data-i="${i}"><td>${esc((a.inicio || '').slice(11, 16))}</td><td class="mono"><b>${esc(a.smax)}</b>${(a._ida || 1) > 1 ? ` <span class="tag-ida">${ordinal(a._ida)}</span>` : ''}</td><td>${esc(a.comarca)}</td><td>${esc(nomeDe(a.uid, a.tecnico))}</td><td class="num">${duracao(a.inicio, a.termino)}</td><td>${chip(a.status)}</td></tr>`).join('')}
     </tbody></table></div>`, [{ t: 'Fechar', primary: true }], '', ov => {
-    $$('tr[data-id]', ov).forEach(tr => tr.onclick = () => { fechar(); formAtendimento(l.find(a => a.id === tr.dataset.id)); });
+    $$('tr[data-i]', ov).forEach(tr => tr.onclick = () => { fechar(); const x = l[tr.dataset.i]; formAtendimento(x._doc || x); });
   });
 }
 
@@ -924,7 +1001,7 @@ function diaDetalhe(d, l) {
 async function exportarExcel() {
   if (!window.ExcelJS) return toast('Aguarde o carregamento e tente de novo.', true);
   toast('Gerando planilha…');
-  let lista; try { lista = await api.listarAtendimentos({ mes: S.mes }); } catch (e) { return toast(e.message, true); }
+  let lista; try { lista = explodir(await api.listarAtendimentos({ mes: S.mes }), S.mes); } catch (e) { return toast(e.message, true); }
   const p = montarPainel(S.mes, lista);
   const wb = new ExcelJS.Workbook();
   const azul = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3A5F' } };
@@ -985,11 +1062,11 @@ async function exportarExcel() {
     const meus = lista.filter(a => a.uid === lin.uid).sort((a, b) => (a.inicio || a.data_ref).localeCompare(b.inicio || b.data_ref));
     meus.forEach((a, i) => {
       const r = 2 + i, ini = toDate(a.inicio), fim = toDate(a.termino);
-      w.getCell(r, 1).value = a.ida > 1 ? `${a.smax} (${ordinal(a.ida)})` : a.smax; w.getCell(r, 2).value = a.comarca;
+      w.getCell(r, 1).value = (a._ida || a.ida || 1) > 1 ? `${a.smax} (${ordinal(a._ida || a.ida)})` : a.smax; w.getCell(r, 2).value = a.comarca;
       if (ini) { w.getCell(r, 3).value = ini; w.getCell(r, 3).numFmt = 'dd/mm/yyyy hh:mm'; }
       if (fim) { w.getCell(r, 4).value = fim; w.getCell(r, 4).numFmt = 'dd/mm/yyyy hh:mm'; }
       if (ini && fim) { w.getCell(r, 5).value = { formula: `D${r}-C${r}` }; w.getCell(r, 5).numFmt = '[h]:mm'; }
-      w.getCell(r, 6).value = a.ticket_softplan; w.getCell(r, 7).value = a.status; w.getCell(r, 8).value = a.encaminhado_para;
+      w.getCell(r, 6).value = a.ticket_softplan; w.getCell(r, 7).value = a._fechada && a.devolucao ? `DEVOLVIDO (${a._statusOrig || 'sem status'}) — ${a.devolucao.motivo || ''}` : a.status; w.getCell(r, 8).value = a.encaminhado_para;
       w.getCell(r, 9).value = a.home_local; w.getCell(r, 10).value = a.usuario_atendido; w.getCell(r, 11).value = a.obs;
       w.getCell(r, 12).value = (a.historico || []).map(e => `${fmtData(e.em)} ${(e.em || '').slice(11, 16)} ${e.por || ''}: ${e.de && e.de !== e.para ? e.de + ' → ' : ''}${e.para || ''}${e.obs ? ' — ' + e.obs : ''}`).join('\n');
       w.getCell(r, 12).alignment = { wrapText: true, vertical: 'top' };
@@ -1142,7 +1219,7 @@ async function desligarUsuario(u) {
       if (destino) {
         const nomeDest = nomeDe(destino);
         await api.transferirAtendimentos(abertos.map(a => ({
-          id: a.id, uid: destino, tecnico: nomeDest,
+          id: a.id, uid: destino, tecnico: nomeDest, uids: unicos([...(a.uids || [a.uid]), destino]),
           historico: [...(Array.isArray(a.historico) ? a.historico : []), { em: agoraLocal(), por: S.perfil.nome, de: a.status, para: a.status,
             obs: `Transferido de ${u.nome} para ${nomeDest} (desligamento da equipe).` }].slice(-300),
         })));
