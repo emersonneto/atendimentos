@@ -131,6 +131,10 @@ export const api = {
     const r = await addDoc(col('atendimentos'), { ...d, criado_em: serverTimestamp() });
     return r.id;
   }),
+  // chamado devolvido pelo setor: marca a ida anterior (qualquer técnico ativo pode, pelas regras)
+  marcarDevolvido: tentar(async (id, { status, devolucao, historico }) => {
+    await updateDoc(doc(db, 'atendimentos', id), { status, devolucao, historico, atualizado_em: serverTimestamp() });
+  }),
   excluirAtendimento: tentar(async id => { await deleteDoc(doc(db, 'atendimentos', id)); }),
 
   // importação: grava com id fixo (não duplica se importar o mesmo arquivo de novo)
