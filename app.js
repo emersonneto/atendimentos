@@ -56,6 +56,24 @@ function toast(msg, erro) {
 }
 const erroBox = (el, msg) => { el.innerHTML = msg ? `<div class="err">${esc(msg)}</div>` : ''; };
 
+// --------------------------------------------------------------- comarcas padronizadas
+// chave para comparar sem diferença de maiúscula, acento ou espaço: "ATIBÁIA " == "atibaia"
+const chaveComarca = v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+// "BOM JESUS DOS PERDOES" -> "Bom Jesus dos Perdoes" (mantém os acentos digitados)
+function tituloComarca(v) {
+  const peq = ['de', 'da', 'do', 'das', 'dos', 'e'];
+  return String(v ?? '').toLowerCase().replace(/\s+/g, ' ').trim().split(' ')
+    .map((p, i) => i && peq.includes(p) ? p : p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+}
+const listaComarcas = () => S.comarcasOficiais || [];
+// devolve o nome oficial da comarca (ou null se não estiver na lista)
+function comarcaOficial(v) {
+  const k = chaveComarca(v); if (!k) return null;
+  return listaComarcas().find(c => chaveComarca(c) === k) || null;
+}
+// nome para exibir/agrupar: oficial se existir, senão o texto padronizado
+const nomeComarca = v => comarcaOficial(v) || tituloComarca(v);
+
 // --------------------------------------------------------------- normalização (formulário e importação)
 const s = v => (v === undefined || v === null ? '' : String(v)).trim();
 function normStatus(v) {
@@ -184,6 +202,7 @@ async function render() {
   if (S.perfil.desligado) return telaBloqueio('Acesso encerrado', 'Sua conta foi desligada da equipe. Se isso for um engano, fale com o líder.');
   if (!S.perfil.ativo) return telaBloqueio('Aguardando liberação', `Sua conta (${esc(S.conta.email)}) foi criada. Avise o líder da equipe para liberar seu acesso em <b>Usuários</b>. Depois é só recarregar esta página.`, true);
   if (!S.usuarios) { try { S.usuarios = await api.listarUsuarios(); } catch (e) { toast(e.message, true); S.usuarios = [S.perfil]; } }
+  if (!S.comarcasOficiais) { try { S.comarcasOficiais = await api.lerComarcas(); } catch (e) { S.comarcasOficiais = []; } }
   const r = rota();
   layout(r);
   const main = $('main');
@@ -440,14 +459,14 @@ function formAtendimento(a) {
   const podeEditar = novo || admin || a.uid === S.perfil.id;
   const dis = podeEditar ? '' : 'disabled';
   const equipe = S.usuarios.filter(u => u.ativo || u.id === a.uid).sort((x, y) => x.nome.localeCompare(y.nome));
-  const comarcas = [...new Set((S.comarcas || []))];
+  const comarcas = listaComarcas().length ? listaComarcas() : [...new Set((S.comarcas || []).map(tituloComarca))].sort();
   const body = `<form id="fa" novalidate>
     <div id="e"></div>
     ${!podeEditar ? `<div class="err" style="background:var(--brand-soft);color:var(--brand)">Atendimento de ${esc(nomeDe(a.uid, a.tecnico))}. Só ele ou o líder podem alterar.</div>` : ''}
     ${admin ? `<label class="f"><span>Técnico</span><select name="uid">${equipe.map(t => `<option value="${t.id}" ${a.uid === t.id ? 'selected' : ''}>${esc(t.nome)}</option>`).join('')}</select></label>` : ''}
     <div class="row">
       <label class="f"><span>Solicitação SMAX <em>*</em></span><input type="text" name="smax" value="${esc(a.smax)}" placeholder="ex.: 1234567" inputmode="numeric" ${dis}></label>
-      <label class="f"><span>Comarca <em>*</em></span><input type="text" name="comarca" value="${esc(a.comarca)}" list="dlComarcas" autocomplete="off" ${dis}></label>
+      <label class="f"><span>Comarca <em>*</em></span><input type="text" name="comarca" value="${esc(a.comarca)}" list="dlComarcas" autocomplete="off" placeholder="Comece a digitar e escolha na lista" ${dis}></label>
     </div>
     <datalist id="dlComarcas">${comarcas.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <div class="row">
@@ -483,6 +502,12 @@ function formAtendimento(a) {
     const uid = admin && d.uid ? d.uid : (a.uid || S.perfil.id);
     const at = montarAtendimento(d, uid, nomeDe(uid, S.perfil.nome));
     const er = validar(at); if (er) { erroBox($('#e', ov), er); ov.scrollTop = 0; return false; }
+    // comarca: só aceita da lista oficial (grava sempre com o nome padronizado)
+    if (listaComarcas().length) {
+      const ofi = comarcaOficial(at.comarca);
+      if (!ofi) { avisoComarca($('#e', ov), at.comarca, ov); ov.scrollTop = 0; return false; }
+      at.comarca = ofi;
+    } else at.comarca = tituloComarca(at.comarca);
     // não deixa registrar o mesmo número de chamado SMAX duas vezes
     if (at.smax && (novo || at.smax !== a.smax)) {
       const dup = await smaxDuplicado(at.smax, a.id);
@@ -511,6 +536,14 @@ function formAtendimento(a) {
   else botoes.push({ t: 'Fechar', primary: true });
   modal(novo ? 'Novo atendimento' : `Atendimento ${esc(a.smax || '')}`, body, botoes, '', ov => {
     const f = $('#fa', ov);
+    // corrige a comarca para o nome oficial ao sair do campo
+    if (podeEditar) f.comarca.addEventListener('change', () => {
+      const v = f.comarca.value; if (!v.trim()) return;
+      const ofi = comarcaOficial(v);
+      if (ofi) { f.comarca.value = ofi; erroBox($('#e', ov), ''); }
+      else if (listaComarcas().length) avisoComarca($('#e', ov), v, ov);
+      else f.comarca.value = tituloComarca(v);
+    });
     // aviso de chamado duplicado já ao sair do campo SMAX
     if (podeEditar) f.smax.addEventListener('change', async () => {
       const v = s(f.smax.value); if (!v || (!novo && v === a.smax)) return erroBox($('#e', ov), '');
@@ -533,6 +566,29 @@ function formAtendimento(a) {
     }));
   });
 }
+function avisoComarca(el, v, ov) {
+  const parecidas = listaComarcas().filter(c => chaveComarca(c).includes(chaveComarca(v).slice(0, 4))).slice(0, 5);
+  el.innerHTML = `<div class="err">A comarca <b>"${esc(v)}"</b> não está na lista de comarcas. Escolha uma das sugestões do campo${parecidas.length ? `, por exemplo: ${parecidas.map(c => `<a href="#" class="sug-com">${esc(c)}</a>`).join(', ')}` : ''}.
+    ${isAdmin() ? `<div style="margin-top:8px"><button type="button" class="btn sm" id="addCom">Cadastrar "${esc(tituloComarca(v))}" na lista</button></div>` : '<div style="margin-top:6px">Se for uma comarca nova, peça ao líder para cadastrar.</div>'}</div>`;
+  $$('.sug-com', el).forEach(a => a.onclick = e => { e.preventDefault(); $('#fa', ov).comarca.value = a.textContent; erroBox(el, ''); });
+  const add = $('#addCom', el);
+  if (add) add.onclick = async () => {
+    const resp = prompt('Nome oficial da comarca (confira os acentos, ex.: Mairiporã):', tituloComarca(v));
+    if (!resp || !resp.trim()) return;
+    const nova = tituloComarca(resp);
+    try { await salvarListaComarcas([...listaComarcas(), nova]); $('#fa', ov).comarca.value = nova; erroBox(el, ''); toast(`"${nova}" cadastrada.`); }
+    catch (e) { toast(e.message, true); }
+  };
+}
+async function salvarListaComarcas(l) {
+  const mapa = new Map(); l.forEach(c => { const n = tituloComarca(c), k = chaveComarca(n); if (k && !mapa.has(k)) mapa.set(k, c.trim() && c === n ? c : n); });
+  const final = [...mapa.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  await api.salvarComarcas(final, S.perfil.nome);
+  S.comarcasOficiais = final;
+  const dl = $('#dlComarcas'); if (dl) dl.innerHTML = final.map(c => `<option value="${esc(c)}">`).join('');
+  return final;
+}
+
 // procura outro atendimento com o mesmo SMAX (em qualquer mês)
 async function smaxDuplicado(smax, idAtual) {
   const l = await api.buscarPorSmax(smax);
@@ -624,7 +680,7 @@ function montarPainel(mes, lista) {
   const atendidos = lista.filter(contaComoAtendido);
   tempos(total, atendidos); temposTent(total, lista);
   const destinos = ENCAMINHADO_PARA.map(d => ({ destino: d, n: atendidos.filter(a => a.encaminhado_para === d).length }));
-  const cont = {}; atendidos.forEach(a => { if (a.comarca) cont[a.comarca] = (cont[a.comarca] || 0) + 1; });
+  const cont = {}; atendidos.forEach(a => { if (a.comarca) { const c = nomeComarca(a.comarca); cont[c] = (cont[c] || 0) + 1; } });
   const porComarca = Object.entries(cont).map(([comarca, n]) => ({ comarca, n })).sort((a, b) => b.n - a.n).slice(0, 10);
   const du = diasUteis(mes);
   return { mes, linhas, total, destinos, porComarca, diasUteis: du, mediaDiaria: du ? +(total.total / du).toFixed(1) : 0 };
@@ -904,6 +960,19 @@ async function telaUsuarios(main) {
         <td style="text-align:right"><button class="btn sm" data-acao="reativar">Reativar</button></td></tr>`).join('')}
       </tbody></table></div>
       <div class="pad hint">Para liberar o e-mail de vez, apague a conta em Firebase → Authentication → Usuários. Os atendimentos não são afetados.</div></details>` : ''}
+    <div class="card comarcas-card">
+      <h3>Comarcas atendidas <span class="muted">· ${listaComarcas().length}</span></h3>
+      <div class="pad">
+        <p class="hint" style="margin-top:0">Só as comarcas desta lista podem ser usadas nos atendimentos, sempre com o mesmo nome. Quem digitar "ATIBAIA" ou "atibaia" grava "Atibaia".</p>
+        <div class="com-add"><input type="text" id="novaCom" placeholder="Nova comarca, ex.: Bragança Paulista"><button class="btn primary" id="addCom2">Adicionar</button></div>
+        <div class="com-lista">${listaComarcas().length ? listaComarcas().map(c => `<span class="com-chip">${esc(c)}<button type="button" data-rem="${esc(c)}" title="Remover ${esc(c)}" aria-label="Remover ${esc(c)}">×</button></span>`).join('') : '<span class="muted">Lista vazia. Use "Montar lista a partir dos atendimentos" para começar com as comarcas que vocês já usam.</span>'}</div>
+        <div class="com-acoes">
+          <button class="btn" id="sugCom">Montar lista a partir dos atendimentos</button>
+          <button class="btn" id="padCom" ${listaComarcas().length ? '' : 'disabled'}>Padronizar atendimentos antigos</button>
+        </div>
+        <div id="comRes"></div>
+      </div>
+    </div>
     <input type="file" id="arq" accept=".xlsx" hidden>`;
   $('#cop').onclick = async () => {
     const msg = `Acesse o sistema de atendimentos: ${link}\nClique em "Primeiro acesso? Criar conta", use seu e-mail da empresa e confirme pelo link que chega no Outlook. Depois me avise que eu libero seu acesso.`;
@@ -911,6 +980,45 @@ async function telaUsuarios(main) {
   };
   $('#imp').onclick = () => $('#arq').click();
   $('#arq').onchange = importar;
+  // ----- comarcas
+  const recarregar = () => render();
+  const adicionar = async () => {
+    const v = $('#novaCom').value.trim(); if (!v) return;
+    if (comarcaOficial(v)) { toast(`"${comarcaOficial(v)}" já está na lista.`); return; }
+    try { await salvarListaComarcas([...listaComarcas(), v]); toast(`"${tituloComarca(v)}" adicionada.`); recarregar(); } catch (e) { toast(e.message, true); }
+  };
+  $('#addCom2').onclick = adicionar;
+  $('#novaCom').onkeydown = e => { if (e.key === 'Enter') adicionar(); };
+  $$('[data-rem]', main).forEach(b => b.onclick = async () => {
+    if (!confirm(`Remover "${b.dataset.rem}" da lista? Os atendimentos antigos não mudam, mas ela deixa de poder ser escolhida.`)) return;
+    try { await salvarListaComarcas(listaComarcas().filter(c => c !== b.dataset.rem)); recarregar(); } catch (e) { toast(e.message, true); }
+  });
+  $('#sugCom').onclick = async () => {
+    let todos; try { todos = await api.listarTodosAtendimentos(); } catch (e) { return toast(e.message, true); }
+    // agrupa as variações; prefere a forma com acento (ex.: "Bragança" em vez de "Braganca")
+    const grupos = new Map();
+    todos.forEach(a => { const k = chaveComarca(a.comarca); if (!k || k === '(nao informada)') return; const g = grupos.get(k) || []; g.push(a.comarca.trim()); grupos.set(k, g); });
+    const sugestao = [...grupos.values()].map(g => tituloComarca(g.find(v => /[^\x00-\x7f]/.test(v)) || g[0]));
+    const novas = sugestao.filter(c => !comarcaOficial(c));
+    if (!novas.length) return toast('Todas as comarcas usadas já estão na lista.');
+    if (!confirm(`Adicionar ${novas.length} comarca(s) encontradas nos atendimentos?\n\n${novas.join(', ')}\n\nDepois você pode remover as que estiverem erradas.`)) return;
+    try { await salvarListaComarcas([...listaComarcas(), ...novas]); toast(`${novas.length} comarca(s) adicionadas.`); recarregar(); } catch (e) { toast(e.message, true); }
+  };
+  $('#padCom').onclick = async () => {
+    let todos; try { todos = await api.listarTodosAtendimentos(); } catch (e) { return toast(e.message, true); }
+    const corrigir = [], fora = new Map();
+    todos.forEach(a => {
+      const ofi = comarcaOficial(a.comarca);
+      if (ofi && ofi !== a.comarca) corrigir.push({ id: a.id, comarca: ofi });
+      else if (!ofi && a.comarca) fora.set(tituloComarca(a.comarca), (fora.get(tituloComarca(a.comarca)) || 0) + 1);
+    });
+    const foraTxt = fora.size ? `<div class="err" style="margin-top:10px">${[...fora.values()].reduce((t, n) => t + n, 0)} atendimento(s) usam comarcas que <b>não estão na lista</b> e ficaram como estão: ${[...fora.entries()].map(([c, n]) => `${esc(c)} (${n})`).join(', ')}. Se forem comarcas válidas, adicione na lista e padronize de novo.</div>` : '';
+    if (!corrigir.length) { $('#comRes').innerHTML = `<p class="hint">Nada para corrigir: os atendimentos já usam os nomes da lista.</p>${foraTxt}`; return; }
+    if (!confirm(`Corrigir o nome da comarca em ${corrigir.length} atendimento(s) para o nome oficial da lista?`)) return;
+    try { await api.atualizarComarcas(corrigir); $('#comRes').innerHTML = `<p class="hint"><b>${corrigir.length}</b> atendimento(s) padronizados.</p>${foraTxt}`; toast('Comarcas padronizadas.'); }
+    catch (e) { toast(e.message, true); }
+  };
+
   $$('tr[data-id]', main).forEach(tr => {
     const u = S.usuarios.find(x => x.id === tr.dataset.id);
     const mudar = async (dados, msg) => { try { await api.atualizarUsuario(u.id, dados); toast(msg); S.usuarios = null; render(); } catch (e) { toast(e.message, true); } };
@@ -989,7 +1097,7 @@ async function importar(ev) {
       for (const row of linhas.slice(1)) {
         if (!s(row[0]) && !s(row[1])) continue;
         const at = montarAtendimento({ smax: row[0], comarca: row[1], inicio: row[2], termino: row[3], ticket_softplan: row[5], status: row[6], encaminhado_para: row[7], home_local: row[8] }, u.id, u.nome);
-        if (!at.comarca) at.comarca = '(não informada)';
+        at.comarca = at.comarca ? nomeComarca(at.comarca) : '(não informada)';
         itens.push({ id: await idImportacao(u.id, at), dados: at }); n++;
       }
       resumo.porAba[aba] = n;

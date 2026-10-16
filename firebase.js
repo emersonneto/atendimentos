@@ -107,6 +107,17 @@ export const api = {
       await b.commit();
     }
   }),
+  // lista oficial de comarcas (documento config/comarcas)
+  lerComarcas: tentar(async () => { const d = await getDoc(doc(db, 'config', 'comarcas')); return d.exists() ? (d.data().lista || []) : []; }),
+  salvarComarcas: tentar(async (lista, por) => { await setDoc(doc(db, 'config', 'comarcas'), { lista, por, atualizado_em: serverTimestamp() }); }),
+  listarTodosAtendimentos: tentar(async () => lista(await getDocs(col('atendimentos')))),
+  atualizarComarcas: tentar(async itens => {
+    for (let i = 0; i < itens.length; i += 400) {
+      const b = writeBatch(db);
+      for (const { id, comarca } of itens.slice(i, i + 400)) b.update(doc(db, 'atendimentos', id), { comarca, atualizado_em: serverTimestamp() });
+      await b.commit();
+    }
+  }),
   listarAgendados: tentar(async ({ uid }) => {
     const f = [where('status', '==', 'AGENDADO')];
     if (uid) f.push(where('uid', '==', uid));
