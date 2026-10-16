@@ -1,5 +1,5 @@
 /* Sistema de Atendimentos — Field (site estático + Firebase) */
-import { api } from './firebase.js';
+import { api } from './firebase.js?v=20261016';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -556,6 +556,13 @@ function formAtendimento(a, opts = {}) {
     } catch (e) { erroBox($('#e', ov), e.message); ov.scrollTop = 0; return false; }
   };
   const botoes = [];
+  // botão direto no chamado: "voltou do setor" (qualquer técnico pode reabrir)
+  if (!novo && !ant && a.smax && PODE_REABRIR.includes(a.status)) botoes.push({ t: '↺ Chamado voltou: reabrir', fn: async () => {
+    let ult = a;
+    try { ult = (await smaxDuplicado(a.smax, null)) || a; } catch (e) { toast(e.message, true); return false; }
+    if (!PODE_REABRIR.includes(ult.status)) { toast(`Este chamado já tem uma ida mais nova (${ult.status}${ult.ida > 1 ? ', ' + ordinal(ult.ida) : ''}). Abra a mais recente.`, true); return false; }
+    setTimeout(() => formAtendimento(null, { reabrir: ult }), 0); return true;
+  } });
   if (!novo && podeEditar) botoes.push({ t: 'Excluir', danger: true, fn: async () => {
     if (!confirm('Excluir este atendimento? Essa ação não pode ser desfeita.')) return false;
     try { await api.excluirAtendimento(a.id); toast('Atendimento excluído.'); refresh(); return true; } catch (e) { toast(e.message, true); return false; }
