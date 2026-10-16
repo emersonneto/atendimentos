@@ -569,16 +569,35 @@ function formAtendimento(a) {
 function avisoComarca(el, v, ov) {
   const parecidas = listaComarcas().filter(c => chaveComarca(c).includes(chaveComarca(v).slice(0, 4))).slice(0, 5);
   el.innerHTML = `<div class="err">A comarca <b>"${esc(v)}"</b> não está na lista de comarcas. Escolha uma das sugestões do campo${parecidas.length ? `, por exemplo: ${parecidas.map(c => `<a href="#" class="sug-com">${esc(c)}</a>`).join(', ')}` : ''}.
-    ${isAdmin() ? `<div style="margin-top:8px"><button type="button" class="btn sm" id="addCom">Cadastrar "${esc(tituloComarca(v))}" na lista</button></div>` : '<div style="margin-top:6px">Se for uma comarca nova, peça ao líder para cadastrar.</div>'}</div>`;
+    <div style="margin-top:8px"><button type="button" class="btn sm" id="addCom">É uma comarca nova: cadastrar "${esc(tituloComarca(v))}"</button></div></div>`;
   $$('.sug-com', el).forEach(a => a.onclick = e => { e.preventDefault(); $('#fa', ov).comarca.value = a.textContent; erroBox(el, ''); });
   const add = $('#addCom', el);
   if (add) add.onclick = async () => {
     const resp = prompt('Nome oficial da comarca (confira os acentos, ex.: Mairiporã):', tituloComarca(v));
     if (!resp || !resp.trim()) return;
     const nova = tituloComarca(resp);
-    try { await salvarListaComarcas([...listaComarcas(), nova]); $('#fa', ov).comarca.value = nova; erroBox(el, ''); toast(`"${nova}" cadastrada.`); }
+    const ja = comarcaOficial(nova);
+    if (ja) { $('#fa', ov).comarca.value = ja; erroBox(el, ''); toast(`"${ja}" já estava na lista.`); return; }
+    // evita duplicata por erro de digitação (ex.: "Atibia" quando já existe "Atibaia")
+    const pare = comarcasParecidas(nova);
+    if (pare.length && !confirm(`Já existem comarcas parecidas na lista:\n\n${pare.join(', ')}\n\nTem certeza de que "${nova}" é uma comarca diferente?`)) return;
+    try { await cadastrarComarca(nova); $('#fa', ov).comarca.value = nova; erroBox(el, ''); toast(`"${nova}" cadastrada na lista.`); }
     catch (e) { toast(e.message, true); }
   };
+}
+// comarcas com nome parecido (mesmo começo ou diferença de 1–2 letras)
+function comarcasParecidas(v) {
+  const k = chaveComarca(v);
+  const dist = (a, b) => { const m = Array.from({ length: a.length + 1 }, (_, i) => [i]); for (let j = 1; j <= b.length; j++) m[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) m[i][j] = Math.min(m[i - 1][j] + 1, m[i][j - 1] + 1, m[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return m[a.length][b.length]; };
+  return listaComarcas().filter(c => { const kc = chaveComarca(c); return kc.slice(0, 5) === k.slice(0, 5) || dist(kc, k) <= 2; }).slice(0, 6);
+}
+// qualquer técnico pode acrescentar uma comarca (sem apagar as que já existem)
+async function cadastrarComarca(nome) {
+  await api.adicionarComarca(nome, S.perfil.nome);
+  S.comarcasOficiais = await api.lerComarcas();
+  const dl = $('#dlComarcas'); if (dl) dl.innerHTML = listaComarcas().map(c => `<option value="${esc(c)}">`).join('');
 }
 async function salvarListaComarcas(l) {
   const mapa = new Map(); l.forEach(c => { const n = tituloComarca(c), k = chaveComarca(n); if (k && !mapa.has(k)) mapa.set(k, c.trim() && c === n ? c : n); });
@@ -963,7 +982,8 @@ async function telaUsuarios(main) {
     <div class="card comarcas-card">
       <h3>Comarcas atendidas <span class="muted">· ${listaComarcas().length}</span></h3>
       <div class="pad">
-        <p class="hint" style="margin-top:0">Só as comarcas desta lista podem ser usadas nos atendimentos, sempre com o mesmo nome. Quem digitar "ATIBAIA" ou "atibaia" grava "Atibaia".</p>
+        <p class="hint" style="margin-top:0">Só as comarcas desta lista podem ser usadas nos atendimentos, sempre com o mesmo nome. Quem digitar "ATIBAIA" ou "atibaia" grava "Atibaia".
+          Qualquer técnico pode cadastrar uma comarca nova pelo formulário; remover e padronizar fica com o líder.</p>
         <div class="com-add"><input type="text" id="novaCom" placeholder="Nova comarca, ex.: Bragança Paulista"><button class="btn primary" id="addCom2">Adicionar</button></div>
         <div class="com-lista">${listaComarcas().length ? listaComarcas().map(c => `<span class="com-chip">${esc(c)}<button type="button" data-rem="${esc(c)}" title="Remover ${esc(c)}" aria-label="Remover ${esc(c)}">×</button></span>`).join('') : '<span class="muted">Lista vazia. Use "Montar lista a partir dos atendimentos" para começar com as comarcas que vocês já usam.</span>'}</div>
         <div class="com-acoes">

@@ -8,7 +8,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc, collection, query, where,
-  serverTimestamp, writeBatch,
+  serverTimestamp, writeBatch, arrayUnion,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import { firebaseConfig, DOMINIOS, ADMINS_INICIAIS } from './config.js';
 
@@ -108,7 +108,9 @@ export const api = {
     }
   }),
   // lista oficial de comarcas (documento config/comarcas)
-  lerComarcas: tentar(async () => { const d = await getDoc(doc(db, 'config', 'comarcas')); return d.exists() ? (d.data().lista || []) : []; }),
+  lerComarcas: tentar(async () => { const d = await getDoc(doc(db, 'config', 'comarcas')); return d.exists() ? [...(d.data().lista || [])].sort((a, b) => a.localeCompare(b, 'pt-BR')) : []; }),
+  // acrescenta sem sobrescrever (funciona mesmo se duas pessoas cadastrarem ao mesmo tempo)
+  adicionarComarca: tentar(async (nome, por) => { await setDoc(doc(db, 'config', 'comarcas'), { lista: arrayUnion(nome), por, atualizado_em: serverTimestamp() }, { merge: true }); }),
   salvarComarcas: tentar(async (lista, por) => { await setDoc(doc(db, 'config', 'comarcas'), { lista, por, atualizado_em: serverTimestamp() }); }),
   listarTodosAtendimentos: tentar(async () => lista(await getDocs(col('atendimentos')))),
   atualizarComarcas: tentar(async itens => {
