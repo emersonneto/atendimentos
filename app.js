@@ -1,5 +1,5 @@
 /* Sistema de Atendimentos — Field (site estático + Firebase) */
-import { api } from './firebase.js?v=20261016d';
+import { api } from './firebase.js?v=20261020';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -803,6 +803,8 @@ function temposTent(r, lista) {
   r.tent_com_tempo = ms.length;
   r.tent_min_medio = ms.length ? Math.round(r.tent_min_total / ms.length) : null;
 }
+// sempre em minutos: "23 min", "70 min"
+const fmtMinCurto = m => `${m} min`;
 const fmtMin = m => m === null || m === undefined ? '—' : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
 
 // "Tentativa de contato" não conta como chamado atendido no painel
@@ -885,7 +887,8 @@ async function telaPainel(main) {
         <div class="kpi fech"><span>Fechado</span><b>${T.fechado}</b></div>
         <div class="kpi tot"><span>Total geral</span><b>${T.total}</b>${T.reabertos ? `<small class="fora">${T.chamados} chamado(s) · ${T.reabertos} reaberto(s)</small>` : ''}</div>
         ${T.devolvido ? `<div class="kpi dev" title="Idas que o setor devolveu; cada ida conta como atendimento"><span>Devolvido</span><b>${T.devolvido}</b></div>` : ''}
-        ${dia ? `<div class="kpi"><span>Média diária</span><b>—</b><small class="fora">dia selecionado</small></div>` : `<div class="kpi"><span>Média diária</span><b>${String(media).replace('.', ',')}</b></div>`}
+        ${dia ? `<div class="kpi" title="Minutos de atendimento no dia selecionado"><span>Minutos no dia</span><b>${fmtMinCurto(T.min_total || 0)}</b><small class="fora">${T.total} atendimento(s)</small></div>`
+              : `<div class="kpi" title="Minutos de atendimento ÷ ${p.diasUteis} dias úteis (seg. a sex.)"><span>Média diária</span><b>${p.diasUteis ? fmtMinCurto(Math.round((T.min_total || 0) / p.diasUteis)) : '—'}</b><small class="fora">${String(media).replace('.', ',')} atendimento(s) por dia</small></div>`}
         <div class="kpi"><span>Tempo médio</span><b>${fmtMin(T.min_medio)}</b></div>
         <div class="kpi tent" title="Tempo médio de cada tentativa de contato (início até término)"><span>Média por tentativa</span><b>${fmtMin(T.tent_min_medio)}</b><small class="fora">${T.tent_com_tempo ? fmtMin(T.tent_min_total) + ' em tentativas' : 'sem tentativas com horário'}</small></div>
       </div>
@@ -893,7 +896,7 @@ async function telaPainel(main) {
           <thead><tr><th>Técnico</th><th class="num">Encaminhado</th><th class="num" title="Não conta no total">Tent. contato*</th><th class="num">Agendado</th><th class="num">Fechado</th><th class="num" title="Idas que o setor devolveu (contam no total)">Devolvido</th><th class="num">Remoto/Home</th><th class="num">Local</th><th class="num">Total geral</th><th class="num" title="Chamados SMAX diferentes. Entre parênteses: idas de chamados reabertos">Chamados</th><th class="num">Horas totais</th><th class="num">Tempo médio</th><th class="num col-tent">Horas em tent.</th><th class="num col-tent">Média por tent.</th></tr></thead>
           <tbody>${(uid ? geral.linhas.filter(r => r.uid === uid) : geral.linhas).map(r => linha(r)).join('')}${uid ? '' : linha(geral.total, true)}</tbody></table></div>
           ${uid ? `<div class="pad hint" style="padding-bottom:0">Mostrando só ${esc(sel.nome)}. <a href="#" id="verTodos2">Ver todos os técnicos</a></div>` : ''}
-          <div class="pad hint"><b>Chamado devolvido e reaberto</b>: cada ida conta como um atendimento, no dia e para o técnico que atendeu. A coluna <b>Chamados</b> mostra quantos SMAX diferentes foram atendidos (↺ = idas de chamados reabertos).<br><b>Tentativa de contato não conta como chamado atendido</b>: aparece na coluna própria, mas fica fora do total geral, das horas, do tempo médio, dos gráficos e do calendário.<br>${dia ? 'Números do dia ' + fmtData(dia) + '.' : `Média diária = total geral ÷ ${p.diasUteis} dias úteis ${p.mes === mesAtual() ? 'até hoje' : 'do mês'}.`}
+          <div class="pad hint"><b>Chamado devolvido e reaberto</b>: cada ida conta como um atendimento, no dia e para o técnico que atendeu. A coluna <b>Chamados</b> mostra quantos SMAX diferentes foram atendidos (↺ = idas de chamados reabertos).<br><b>Tentativa de contato não conta como chamado atendido</b>: aparece na coluna própria, mas fica fora do total geral, das horas, do tempo médio, dos gráficos e do calendário.<br>${dia ? 'Números do dia ' + fmtData(dia) + '.' : `Média diária = minutos de atendimento ÷ ${p.diasUteis} dias úteis (seg. a sex.) ${p.mes === mesAtual() ? 'até hoje' : 'do mês'}; embaixo, a quantidade de atendimentos por dia.`}
             Tempo médio = horas de atendimento ÷ atendimentos com início e término preenchidos.</div></div>
       <div class="graficos">
           <div class="card"><h3>Atendimento SAJ — encaminhados para${filtros ? ` <span class="muted">· ${filtros.replace(/<\/?b>/g, '')}</span>` : ''}</h3><div class="pad bars">${p.destinos.map(d => `<div class="bar"><span>${esc(d.destino)}</span><div class="t"><i style="width:${d.n / maxD * 100}%"></i></div><b>${d.n}</b></div>`).join('')}</div></div>
@@ -1026,6 +1029,7 @@ async function exportarExcel() {
     });
   });
   ws.getCell('Q3').value = 'MÉDIA DIÁRIA'; cab(ws.getCell('Q3')); ws.getCell('R3').value = p.mediaDiaria; ws.getCell('R3').border = borda;
+  ws.getCell('Q5').value = 'MIN. POR DIA'; cab(ws.getCell('Q5')); ws.getCell('R5').value = p.diasUteis ? Math.round((p.total.min_total || 0) / p.diasUteis) : 0; ws.getCell('R5').border = borda;
   ws.getCell('Q4').value = `(${p.diasUteis} dias úteis)`; ws.getCell('O4').font = { italic: true, size: 9 };
   ws.getCell('T3').value = 'ATENDIMENTO SAJ'; cab(ws.getCell('T3')); ws.getCell('U3').value = 'QTD'; cab(ws.getCell('U3'));
   p.destinos.forEach((d, i) => { ws.getCell(4 + i, 20).value = d.destino; ws.getCell(4 + i, 21).value = d.n; ws.getCell(4 + i, 20).border = borda; ws.getCell(4 + i, 21).border = borda; });
