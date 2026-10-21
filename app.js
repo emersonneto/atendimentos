@@ -1,5 +1,5 @@
 /* Sistema de Atendimentos — Field (site estático + Firebase) */
-import { api } from './firebase.js?v=20261020';
+import { api } from './firebase.js?v=20261021';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -803,8 +803,8 @@ function temposTent(r, lista) {
   r.tent_com_tempo = ms.length;
   r.tent_min_medio = ms.length ? Math.round(r.tent_min_total / ms.length) : null;
 }
-// sempre em minutos: "23 min", "70 min"
-const fmtMinCurto = m => `${m} min`;
+// até 59 minutos: "45 min"; a partir de 60: "1h", "1h 10min", "8h 23min"
+const fmtMinCurto = m => m < 60 ? `${m} min` : `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}min` : ''}`;
 const fmtMin = m => m === null || m === undefined ? '—' : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
 
 // "Tentativa de contato" não conta como chamado atendido no painel
@@ -887,7 +887,7 @@ async function telaPainel(main) {
         <div class="kpi fech"><span>Fechado</span><b>${T.fechado}</b></div>
         <div class="kpi tot"><span>Total geral</span><b>${T.total}</b>${T.reabertos ? `<small class="fora">${T.chamados} chamado(s) · ${T.reabertos} reaberto(s)</small>` : ''}</div>
         ${T.devolvido ? `<div class="kpi dev" title="Idas que o setor devolveu; cada ida conta como atendimento"><span>Devolvido</span><b>${T.devolvido}</b></div>` : ''}
-        ${dia ? `<div class="kpi" title="Minutos de atendimento no dia selecionado"><span>Minutos no dia</span><b>${fmtMinCurto(T.min_total || 0)}</b><small class="fora">${T.total} atendimento(s)</small></div>`
+        ${dia ? `<div class="kpi" title="Tempo de atendimento no dia selecionado"><span>Tempo no dia</span><b>${fmtMinCurto(T.min_total || 0)}</b><small class="fora">${T.total} atendimento(s)</small></div>`
               : `<div class="kpi" title="Minutos de atendimento ÷ ${p.diasUteis} dias úteis (seg. a sex.)"><span>Média diária</span><b>${p.diasUteis ? fmtMinCurto(Math.round((T.min_total || 0) / p.diasUteis)) : '—'}</b><small class="fora">${String(media).replace('.', ',')} atendimento(s) por dia</small></div>`}
         <div class="kpi"><span>Tempo médio</span><b>${fmtMin(T.min_medio)}</b></div>
         <div class="kpi tent" title="Tempo médio de cada tentativa de contato (início até término)"><span>Média por tentativa</span><b>${fmtMin(T.tent_min_medio)}</b><small class="fora">${T.tent_com_tempo ? fmtMin(T.tent_min_total) + ' em tentativas' : 'sem tentativas com horário'}</small></div>
