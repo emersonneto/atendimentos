@@ -306,3 +306,7 @@ tr.com-idas{background:#fff7fb}
 .sec{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);font-weight:700;margin:16px 0 8px}
 .aviso-migr{background:var(--st-dev-bg);border:1px solid var(--st-dev);color:var(--ink);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 @media (max-width:600px){.etapa{grid-template-columns:28px 1fr}.etapa .t{grid-column:2;text-align:left}}
+
+fieldset.devol.agend{border-color:var(--st-ag);background:var(--st-ag-bg)}
+fieldset.devol.agend legend{color:var(--st-ag)}
+.setor.agenda-gap{border-left-color:var(--st-ag);color:var(--st-ag)}

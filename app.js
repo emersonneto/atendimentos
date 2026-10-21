@@ -1,5 +1,5 @@
 /* Sistema de Atendimentos — Field (site estático + Firebase) */
-import { api } from './firebase.js?v=20261021b';
+import { api } from './firebase.js?v=20261021e';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -13,6 +13,7 @@ const HOME_LOCAL = ['HOME', 'LOCAL'];
 // DEVOLVIDO: o setor devolveu o chamado e ele foi reaberto em uma nova "ida" (registro novo com o mesmo SMAX)
 const MOTIVOS_DEVOLUCAO = ['Faltou informação', 'Fora do escopo do setor', 'Resolvido em parte', 'Precisa de atendimento local'];
 const PODE_REABRIR = ['ENCAMINHADO', 'FECHADO', ''];   // '' = salvo sem status
+const fmtAgenda = v => v ? `${fmtData(v)} ${v.slice(11, 16)}` : 'sem horário';
 const ordinal = n => `${n}ª ida`;
 
 const S = {
@@ -182,6 +183,43 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharCampan
 
 // --------------------------------------------------------------- fluxo de login
 let iniciado = false;
+// --------------------------------------------------------------- atualização automática
+// Cada versão publicada tem um número. O sistema confere o arquivo versao.json (sem cache)
+// ao abrir, a cada 5 minutos e quando a aba volta a ficar visível. Se mudou, recarrega sozinho.
+const VERSAO = '20261021e';
+let versaoNova = null;
+async function conferirVersao() {
+  try {
+    const r = await fetch(`versao.json?t=${Date.now()}`, { cache: 'no-store' });
+    if (!r.ok) return;
+    const v = String((await r.json()).versao || '');
+    if (!v || v === VERSAO) return;
+    // proteção: se já recarregou para essa versão e continua a antiga (ex.: app.js não foi enviado), não fica em loop
+    let ja = null; try { ja = sessionStorage.getItem('recarregouPara'); } catch {}
+    if (ja === v) return;
+    versaoNova = v; aplicarVersao();
+  } catch { /* sem internet: tenta de novo depois */ }
+}
+function aplicarVersao() {
+  if (!versaoNova) return;
+  // não interrompe quem está preenchendo um formulário: atualiza quando ele fechar
+  if (document.querySelector('.overlay')) { avisoVersao(); return; }
+  try { sessionStorage.setItem('recarregouPara', versaoNova); } catch {}
+  const u = new URL(location.href); u.searchParams.set('v', versaoNova);
+  location.replace(u.toString());   // endereço novo = o navegador baixa tudo de novo
+}
+// sem mensagem: espera a pessoa fechar o formulário e então atualiza em silêncio
+function avisoVersao() {
+  if (avisoVersao.ligado) return; avisoVersao.ligado = true;
+  const obs = new MutationObserver(() => { if (!document.querySelector('.overlay')) { obs.disconnect(); avisoVersao.ligado = false; aplicarVersao(); } });
+  obs.observe(document.body, { childList: true });
+}
+// tira o ?v=... do endereço depois que carregou (fica mais limpo)
+if (new URL(location.href).searchParams.has('v')) { const u = new URL(location.href); u.searchParams.delete('v'); history.replaceState(null, '', u.toString()); }
+conferirVersao();
+setInterval(conferirVersao, 5 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') conferirVersao(); });
+
 api.aoMudarLogin(async conta => {
   S.conta = conta; S.perfil = null; S.usuarios = null; S.erroPerfil = null; S.filtros.tecnico = null;
   if (conta) S.telaAuth = 'entrar'; // ao sair, volta para a tela de login
@@ -509,8 +547,10 @@ function explodir(docs, mes) {
   const out = [];
   docs.forEach(doc => {
     const base = { smax: doc.smax, comarca: doc.comarca, ticket_softplan: doc.ticket_softplan, id: doc.id, _doc: doc };
-    idasFechadas(doc).forEach((x, i) => out.push({ ...base, ...x, _ida: i + 1, _fechada: true, _statusOrig: x.status, status: x.devolucao ? 'DEVOLVIDO' : x.status }));
-    out.push({ ...doc, _doc: doc, _ida: idasFechadas(doc).length + (doc.ida || 1) });
+    const fe = idasFechadas(doc);
+    // _reaberto = esta ida existe porque a anterior foi devolvida pelo setor (agendamento não conta como reabertura)
+    fe.forEach((x, i) => out.push({ ...base, ...x, _ida: i + 1, _fechada: true, _statusOrig: x.status, status: x.devolucao ? 'DEVOLVIDO' : x.status, _reaberto: i > 0 && !!fe[i - 1].devolucao }));
+    out.push({ ...doc, _doc: doc, _ida: fe.length + (doc.ida || 1), _reaberto: fe.length ? !!fe[fe.length - 1].devolucao : (doc.ida || 1) > 1 });
   });
   return mes ? out.filter(x => x.mes === mes) : out;
 }
@@ -526,7 +566,8 @@ function blocoIdas(doc, encerrando) {
       <b>${esc(nomeDe(x.uid, x.tecnico))}</b>${x.home_local ? ' · ' + esc(x.home_local) : ''} <span class="lock">${encerrando && x === doc ? '🔒 vai ser encerrada agora' : atual ? '✏️ ida atual (editar abaixo)' : '🔒 encerrada'}</span>
       <small>${fmtDH(x.inicio) || 'sem horário'}${x.termino ? ' → ' + esc((x.termino || '').slice(11, 16)) : ''} · ${chip(x.status)}${x.encaminhado_para ? ` para <span class="tag">${esc(x.encaminhado_para)}</span>` : ''}</small>
       ${x.obs ? `<small>Obs.: ${esc(x.obs)}</small>` : ''}</div><div class="t">${m !== null ? fmtHM(m) : '—'}<small>${x.status === 'TENT CONTATO' ? 'tentativa' : 'atendimento'}</small></div></div>`; };
-  const gap = x => { const p = parado(x), d = x.devolucao || {}; return `<div class="setor">⏳ <b>No setor ${esc(d.setor || x.encaminhado_para || '')}${p !== null ? ' por ' + fmtMin(p) : ''}</b>${d.em ? ` · devolvido em ${fmtDH(d.em)}` : ''} · não conta nas horas do técnico${d.motivo ? `<br>Motivo: <b>"${esc(d.motivo)}"</b>` : ''}</div>`; };
+  const gap = x => { if (!x.devolucao) return x.status === 'AGENDADO' ? `<div class="setor agenda-gap">📅 <b>Agendado para ${fmtAgenda(x.agendamento)}</b>${x.usuario_atendido ? ' · usuário: ' + esc(x.usuario_atendido) : ''}</div>` : '';
+    const p = parado(x), d = x.devolucao || {}; return `<div class="setor">⏳ <b>No setor ${esc(d.setor || x.encaminhado_para || '')}${p !== null ? ' por ' + fmtMin(p) : ''}</b>${d.em ? ` · devolvido em ${fmtDH(d.em)}` : ''} · não conta nas horas do técnico${d.motivo ? `<br>Motivo: <b>"${esc(d.motivo)}"</b>` : ''}</div>`; };
   return `<div class="resumo"><div><span>Status atual</span><b>${chip(doc.status)}</b></div><div><span>Tempo de atendimento</span><b>${fmtHM(tAt)}</b></div>
       <div><span>Parado nos setores</span><b style="color:var(--st-dev)">${tPar ? fmtMin(tPar) : '—'}</b></div><div><span>Idas</span><b>${fech.length + 1}</b></div></div>
     <div class="sec">Idas do chamado</div><div class="etapas">${fech.map((x, i) => linhaIda(x, i + 1) + gap(x)).join('')}${linhaIda(doc, fech.length + 1, !encerrando)}</div>
@@ -534,10 +575,11 @@ function blocoIdas(doc, encerrando) {
 }
 
 function formAtendimento(a, opts = {}) {
-  const chamado = opts.novaIda ? a : null;   // chamado que voltou do setor: vai ganhar uma ida nova
+  const chamado = opts.novaIda ? a : null;   // chamado que voltou do setor (ou agendamento a atender): vai ganhar uma ida nova
+  const agend = !!(chamado && opts.agendado);
   const novo = !a;
   const fech = chamado ? idasFechadas(chamado) : (a ? idasFechadas(a) : []);
-  if (chamado) a = { inicio: agoraLocal(), status: '', home_local: '', uid: S.perfil.id, smax: chamado.smax, comarca: chamado.comarca, ticket_softplan: chamado.ticket_softplan, usuario_atendido: chamado.usuario_atendido };
+  if (chamado) a = { inicio: agend ? (chamado.agendamento || agoraLocal()) : agoraLocal(), status: '', home_local: agend ? chamado.home_local : '', uid: S.perfil.id, smax: chamado.smax, comarca: chamado.comarca, ticket_softplan: chamado.ticket_softplan, usuario_atendido: chamado.usuario_atendido };
   a = a || { inicio: agoraLocal(), status: '', home_local: '', uid: S.perfil.id };
   const ida = chamado ? fech.length + 2 : fech.length + (a.ida || 1);
   const admin = isAdmin();
@@ -547,7 +589,9 @@ function formAtendimento(a, opts = {}) {
   const comarcas = listaComarcas().length ? listaComarcas() : [...new Set((S.comarcas || []).map(tituloComarca))].sort();
   const body = `<form id="fa" novalidate>
     <div id="e"></div>
-    ${chamado ? `<fieldset class="devol"><legend>Chamado voltou do setor · ${ordinal(ida)}</legend>
+    ${agend ? `<fieldset class="devol agend"><legend>Atender agendamento · ${ordinal(ida)}</legend>
+      <p class="hint" style="margin:0">Agendado para <b>${fmtAgenda(chamado.agendamento)}</b>${chamado.usuario_atendido ? `, usuário <b>${esc(chamado.usuario_atendido)}</b>` : ''}. A ida de ${fmtData(chamado.data_ref)} (${esc(nomeDe(chamado.uid, chamado.tecnico))}) fica encerrada como <b>AGENDADO</b> e continua contando em ${esc(nomeMes(chamado.mes))}. Esta nova ida conta no mês em que for atendida, com o horário real.</p></fieldset>
+      ${blocoIdas(chamado, true)}<div class="sec">Atendimento (${ordinal(ida)})</div>` : chamado ? `<fieldset class="devol"><legend>Chamado voltou do setor · ${ordinal(ida)}</legend>
       <p class="hint" style="margin-top:0">A ida atual (${fmtData(chamado.data_ref)}, ${esc(nomeDe(chamado.uid, chamado.tecnico))}, ${esc(chamado.status || 'sem status')}${chamado.encaminhado_para ? ' para ' + esc(chamado.encaminhado_para) : ''}) vai ser encerrada e travada. Abaixo você registra a <b>${ordinal(ida)}</b>: conta como mais um atendimento, com o seu horário, no mesmo chamado.</p>
       <div class="row">
         <label class="f"><span>Devolvido por</span><select name="dev_setor">${ENCAMINHADO_PARA.map(x => `<option ${chamado.encaminhado_para === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
@@ -594,7 +638,7 @@ function formAtendimento(a, opts = {}) {
     const f = $('#fa', ov); const d = Object.fromEntries(new FormData(f));
     $$('.seg', f).forEach(sg => { const on = $('button.on', sg); d[sg.dataset.name] = on ? on.dataset.v : ''; });
     if (d.status !== 'AGENDADO') { d.agendamento = d.agendamento || ''; }
-    if (chamado) { d.dev_motivo = s(d.dev_motivo).slice(0, 200); if (!d.dev_motivo) { erroBox($('#e', ov), 'Escreva o motivo da devolução.'); ov.scrollTop = 0; f.dev_motivo.focus(); return false; } }
+    if (chamado && !agend) { d.dev_motivo = s(d.dev_motivo).slice(0, 200); if (!d.dev_motivo) { erroBox($('#e', ov), 'Escreva o motivo da devolução.'); ov.scrollTop = 0; f.dev_motivo.focus(); return false; } }
     const uid = admin && d.uid ? d.uid : (chamado ? S.perfil.id : (a.uid || S.perfil.id));
     const at = montarAtendimento(d, uid, nomeDe(uid, S.perfil.nome));
     if (chamado || fech.length) at.smax = (chamado || a).smax;
@@ -616,9 +660,9 @@ function formAtendimento(a, opts = {}) {
     if (chamado) {
       // encerra a ida atual (fica travada) e abre a nova
       const enc = {}; CAMPOS_IDA.forEach(k => { enc[k] = chamado[k] ?? ''; });
-      enc.devolucao = { setor: d.dev_setor, motivo: d.dev_motivo, em: normDataHora(d.dev_em) || agora, por: S.perfil.nome };
+      if (!agend) enc.devolucao = { setor: d.dev_setor, motivo: d.dev_motivo, em: normDataHora(d.dev_em) || agora, por: S.perfil.nome };
       idas = [...fech, enc];
-      hist.push({ em: agora, por: S.perfil.nome, de: chamado.status || '', para: at.status, obs: [`${ordinal(ida)} — devolvido por ${d.dev_setor} (${d.dev_motivo})`, obsAlt].filter(Boolean).join('. ') });
+      hist.push({ em: agora, por: S.perfil.nome, de: chamado.status || '', para: at.status, obs: [agend ? `${ordinal(ida)} — atendimento do agendamento de ${fmtAgenda(chamado.agendamento)}` : `${ordinal(ida)} — devolvido por ${d.dev_setor} (${d.dev_motivo})`, obsAlt].filter(Boolean).join('. ') });
     } else if (novo) hist.push({ em: agora, por: S.perfil.nome, de: '', para: at.status, obs: obsAlt });
     else if (at.status !== (a.status || '') || obsAlt) hist.push({ em: agora, por: S.perfil.nome, de: a.status || '', para: at.status, obs: obsAlt });
     at.historico = hist.slice(-300);
@@ -626,7 +670,7 @@ function formAtendimento(a, opts = {}) {
     at.meses = mesesDe(idas, at); at.uids = uidsDe(idas, at);
     try {
       await api.salvarAtendimento(novo ? null : (chamado || a).id, at);
-      toast(chamado ? `${ordinal(ida)} registrada no chamado ${at.smax}.` : novo ? 'Atendimento registrado.' : 'Atendimento atualizado.');
+      toast(agend ? `Agendamento atendido (${ordinal(ida)}) no chamado ${at.smax}.` : chamado ? `${ordinal(ida)} registrada no chamado ${at.smax}.` : novo ? 'Atendimento registrado.' : 'Atendimento atualizado.');
       if (at.mes !== S.mes && novo) toast(`Registrado em ${nomeMes(at.mes)} (data do início).`);
       S.comarcas = [at.comarca, ...(S.comarcas || [])];
       refresh(); return true;
@@ -645,9 +689,11 @@ function formAtendimento(a, opts = {}) {
     if (!PODE_REABRIR.includes(ult.status || '')) { toast(`Este chamado já tem uma ida mais nova (${ult.status}). Abra a mais recente.`, true); return false; }
     setTimeout(() => formAtendimento(ult, { novaIda: true }), 0); return true;
   } });
+  // agendamento: quando chegar o dia, o atendimento vira a próxima ida (conta no mês em que foi feito)
+  if (!novo && !chamado && a.status === 'AGENDADO') botoes.push({ t: '▶ Atender agendamento', fn: async () => { setTimeout(() => formAtendimento(a, { novaIda: true, agendado: true }), 0); return true; } });
   if (podeEditar) botoes.push({ t: 'Cancelar' }, { t: novo ? 'Registrar' : chamado ? `Registrar ${ordinal(ida)}` : 'Salvar', primary: true, fn: salvar });
   else botoes.push({ t: 'Fechar', primary: true });
-  modal(chamado ? `Chamado ${esc(chamado.smax)} · nova ida` : novo ? 'Novo atendimento' : `Chamado ${esc(a.smax || '')}${fech.length ? ` <span class="idas">↺ ${fech.length + 1} idas</span>` : ''}`, body, botoes, chamado || fech.length ? 'lg' : '', ov => {
+  modal(agend ? `Chamado ${esc(chamado.smax)} · atender agendamento` : chamado ? `Chamado ${esc(chamado.smax)} · nova ida` : novo ? 'Novo atendimento' : `Chamado ${esc(a.smax || '')}${fech.length ? ` <span class="idas">↺ ${fech.length + 1} idas</span>` : ''}`, body, botoes, chamado || fech.length ? 'lg' : '', ov => {
     const f = $('#fa', ov);
     // corrige a comarca para o nome oficial ao sair do campo
     if (podeEditar) f.comarca.addEventListener('change', () => {
@@ -681,7 +727,7 @@ function formAtendimento(a, opts = {}) {
         if (v === 'FECHADO' && !f.termino.value) { f.termino.value = agoraLocal(); atualizaDur(); }
       }
     }));
-    if (chamado) f.dev_motivo.focus();
+    if (chamado && !agend) f.dev_motivo.focus();
   });
 }
 function avisoComarca(el, v, ov) {
@@ -738,10 +784,11 @@ function avisoDuplicado(el, dup, ov) {
   const n = numIdas(dup) + (dup.ida > 1 ? dup.ida - 1 : 0);
   el.innerHTML = `<div class="err">O chamado SMAX <b>${esc(dup.smax)}</b> já existe: ida atual de <b>${esc(nomeDe(dup.uid, dup.tecnico))}</b>
     em ${fmtData(dup.data_ref)} (${esc(dup.status || 'sem status')}${dup.encaminhado_para ? ' para ' + esc(dup.encaminhado_para) : ''}${n > 1 ? ', ' + ordinal(n) : ''}).
-    ${reabre ? 'Se o setor devolveu o chamado, registre uma <b>nova ida</b> nele: continua sendo o mesmo chamado e a nova ida conta como mais um atendimento.' : 'Atualize o registro existente em vez de criar outro.'}
-    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">${reabre ? '<button type="button" class="btn sm primary" id="reabrirDup">↺ Ele voltou: nova ida</button>' : ''}<button type="button" class="btn sm" id="abrirDup">Abrir o chamado</button></div></div>`;
+    ${dup.status === 'AGENDADO' ? `Está agendado para <b>${fmtAgenda(dup.agendamento)}</b>: use <b>Atender agendamento</b> para registrar o atendimento no mesmo chamado.` : reabre ? 'Se o setor devolveu o chamado, registre uma <b>nova ida</b> nele: continua sendo o mesmo chamado e a nova ida conta como mais um atendimento.' : 'Atualize o registro existente em vez de criar outro.'}
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">${reabre ? '<button type="button" class="btn sm primary" id="reabrirDup">↺ Ele voltou: nova ida</button>' : ''}${dup.status === 'AGENDADO' ? '<button type="button" class="btn sm primary" id="atenderDup">▶ Atender agendamento</button>' : ''}<button type="button" class="btn sm" id="abrirDup">Abrir o chamado</button></div></div>`;
   $('#abrirDup', el).onclick = () => { ov.remove(); formAtendimento(dup); };
   if (reabre) $('#reabrirDup', el).onclick = () => { ov.remove(); formAtendimento(dup, { novaIda: true }); };
+  if ($('#atenderDup', el)) $('#atenderDup', el).onclick = () => { ov.remove(); formAtendimento(dup, { novaIda: true, agendado: true }); };
 }
 // linha do tempo do histórico (mais recente primeiro)
 function linhaDoTempo(h) {
@@ -816,7 +863,7 @@ function montarPainel(mes, lista) {
   const linhas = [...ids].map(uid => {
     const m = lista.filter(a => a.uid === uid); const c = k => m.filter(a => a.status === k).length;
     const r = { uid, nome: nomeDe(uid, (m[0] || {}).tecnico), encaminhado: c('ENCAMINHADO'), tent_contato: c('TENT CONTATO'), agendado: c('AGENDADO'), fechado: c('FECHADO'), devolvido: c('DEVOLVIDO'),
-      reabertos: m.filter(a => (a._ida || a.ida || 1) > 1 && contaComoAtendido(a)).length, chamados: new Set(m.filter(contaComoAtendido).map(a => a.smax || a.id)).size,
+      reabertos: m.filter(a => a._reaberto && contaComoAtendido(a)).length, chamados: new Set(m.filter(contaComoAtendido).map(a => a.smax || a.id)).size,
       home: m.filter(a => a.home_local === 'HOME').length, local: m.filter(a => a.home_local === 'LOCAL').length };
     r.total = r.encaminhado + r.agendado + r.fechado + r.devolvido;   // tentativa de contato fica de fora
     tempos(r, m.filter(contaComoAtendido)); temposTent(r, m); return r;
