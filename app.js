@@ -1,5 +1,5 @@
 /* Sistema de Atendimentos — Field (site estático + Firebase) */
-import { api } from './firebase.js?v=20261021f';
+import { api } from './firebase.js?v=20261021g';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -186,7 +186,7 @@ let iniciado = false;
 // --------------------------------------------------------------- atualização automática
 // Cada versão publicada tem um número. O sistema confere o arquivo versao.json (sem cache)
 // ao abrir, a cada 5 minutos e quando a aba volta a ficar visível. Se mudou, recarrega sozinho.
-const VERSAO = '20261021f';
+const VERSAO = '20261021g';
 let versaoNova = null;
 async function conferirVersao() {
   try {
@@ -222,8 +222,8 @@ if (new URL(location.href).searchParams.has('v')) { const u = new URL(location.h
 // Clique no botão: atualiza os dados e confere se saiu versão nova do sistema (equivale ao Ctrl+F5).
 const TELAS_ATU = ['atendimentos', 'agenda', 'painel'];
 let ultimaAtu = Date.now(), atualizando = false;
-const botaoAtu = () => `<span class="atu"><button class="btn" id="atu" title="Busca o que a equipe registrou e confere se saiu versão nova do sistema">↻ Atualizar</button><small id="atuHora"></small></span>`;
-function marcarHora() { ultimaAtu = Date.now(); const h = $('#atuHora'); if (h) h.textContent = `atualizado às ${new Date().toTimeString().slice(0, 5)}`; }
+const botaoAtu = () => `<span class="atu"><button class="btn" id="atu" title="Busca o que a equipe registrou e confere se saiu versão nova do sistema">↻ Atualizar</button></span>`;
+function marcarHora() { ultimaAtu = Date.now(); }
 async function versaoMudou() {
   try {
     const r = await fetch(`versao.json?t=${Date.now()}`, { cache: 'no-store' }); if (!r.ok) return null;
