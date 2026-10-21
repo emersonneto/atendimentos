@@ -310,3 +310,8 @@ tr.com-idas{background:#fff7fb}
 fieldset.devol.agend{border-color:var(--st-ag);background:var(--st-ag-bg)}
 fieldset.devol.agend legend{color:var(--st-ag)}
 .setor.agenda-gap{border-left-color:var(--st-ag);color:var(--st-ag)}
+
+/* botão atualizar */
+.atu{display:inline-flex;align-items:center;gap:8px}
+.atu small{color:var(--ink-3);font-size:12px;white-space:nowrap}
+@media (max-width:720px){.atu small{display:none}}

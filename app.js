@@ -1,5 +1,5 @@
 /* Sistema de Atendimentos — Field (site estático + Firebase) */
-import { api } from './firebase.js?v=20261021e';
+import { api } from './firebase.js?v=20261021f';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -186,7 +186,7 @@ let iniciado = false;
 // --------------------------------------------------------------- atualização automática
 // Cada versão publicada tem um número. O sistema confere o arquivo versao.json (sem cache)
 // ao abrir, a cada 5 minutos e quando a aba volta a ficar visível. Se mudou, recarrega sozinho.
-const VERSAO = '20261021e';
+const VERSAO = '20261021f';
 let versaoNova = null;
 async function conferirVersao() {
   try {
@@ -216,9 +216,51 @@ function avisoVersao() {
 }
 // tira o ?v=... do endereço depois que carregou (fica mais limpo)
 if (new URL(location.href).searchParams.has('v')) { const u = new URL(location.href); u.searchParams.delete('v'); history.replaceState(null, '', u.toString()); }
-conferirVersao();
-setInterval(conferirVersao, 5 * 60 * 1000);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') conferirVersao(); });
+
+// --------------------------------------------------------------- botão ↻ Atualizar
+// Dados: atualiza sozinho a cada 2 minutos e quando a aba volta a ficar visível (se nenhum formulário estiver aberto).
+// Clique no botão: atualiza os dados e confere se saiu versão nova do sistema (equivale ao Ctrl+F5).
+const TELAS_ATU = ['atendimentos', 'agenda', 'painel'];
+let ultimaAtu = Date.now(), atualizando = false;
+const botaoAtu = () => `<span class="atu"><button class="btn" id="atu" title="Busca o que a equipe registrou e confere se saiu versão nova do sistema">↻ Atualizar</button><small id="atuHora"></small></span>`;
+function marcarHora() { ultimaAtu = Date.now(); const h = $('#atuHora'); if (h) h.textContent = `atualizado às ${new Date().toTimeString().slice(0, 5)}`; }
+async function versaoMudou() {
+  try {
+    const r = await fetch(`versao.json?t=${Date.now()}`, { cache: 'no-store' }); if (!r.ok) return null;
+    const v = String((await r.json()).versao || ''); return v && v !== VERSAO ? v : null;
+  } catch { return null; }
+}
+async function atualizarTela(manual) {
+  const r = rota();
+  if (atualizando || !S.perfil || !S.perfil.ativo || !TELAS_ATU.includes(r)) return;
+  if (!manual && (document.querySelector('.overlay') || document.visibilityState !== 'visible')) return;
+  atualizando = true; const b = $('#atu'); if (b) { b.disabled = true; b.textContent = '↻ Atualizando…'; }
+  try {
+    if (manual) {
+      const v = await versaoMudou();
+      if (v) { let ja = null; try { ja = sessionStorage.getItem('recarregouPara'); } catch {} if (ja !== v) { versaoNova = v; aplicarVersao(); return; } }
+      try { S.usuarios = await api.listarUsuarios(); } catch {}
+    }
+    const y = scrollY, main = $('main');
+    if (r === 'atendimentos' && S.recarregar) await S.recarregar();
+    else if (r === 'painel') { if (manual || await mudou('painel')) await telaPainel(main); }
+    else if (r === 'agenda') { if (manual || await mudou('agenda')) await telaAgenda(main); }
+    scrollTo(0, y); ligarAtu(); marcarHora();
+    if (manual) toast('Informações atualizadas.');
+  } catch (e) { if (manual) toast(e.message, true); }
+  finally { atualizando = false; const b2 = $('#atu'); if (b2) { b2.disabled = false; b2.textContent = '↻ Atualizar'; } }
+}
+// no automático, só redesenha o Painel/Agenda se algo mudou (evita a tela piscar à toa)
+async function mudou(tela) {
+  try {
+    const l = tela === 'painel' ? await api.listarAtendimentos({ mes: S.mes }) : await api.listarAgendados({ uid: isAdmin() ? null : S.perfil.id });
+    const ass = assinatura(l), k = 'assin_' + tela, antes = S[k]; S[k] = ass; return antes !== ass;
+  } catch { return false; }
+}
+const assinatura = l => JSON.stringify(l.map(x => [x.id, x.status, x.inicio, x.termino, x.agendamento, x.comarca, x.encaminhado_para, (x.idas || []).length, x.uid]).sort());
+function ligarAtu() { const b = $('#atu'); if (b) b.onclick = () => atualizarTela(true); marcarHora(); }
+setInterval(() => atualizarTela(false), 2 * 60 * 1000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - ultimaAtu > 30 * 1000) atualizarTela(false); });
 
 api.aoMudarLogin(async conta => {
   S.conta = conta; S.perfil = null; S.usuarios = null; S.erroPerfil = null; S.filtros.tecnico = null;
@@ -249,10 +291,13 @@ async function render() {
   const r = rota();
   layout(r);
   const main = $('main');
-  if (r === 'painel') return telaPainel(main);
-  if (r === 'agenda') return telaAgenda(main);
-  if (r === 'usuarios' && isAdmin()) return telaUsuarios(main);
-  return telaAtendimentos(main);
+  S.assin_painel = S.assin_agenda = undefined;
+  let t;
+  if (r === 'painel') t = telaPainel(main);
+  else if (r === 'agenda') t = telaAgenda(main);
+  else if (r === 'usuarios' && isAdmin()) return telaUsuarios(main);
+  else t = telaAtendimentos(main);
+  ligarAtu(); return t;
 }
 
 function authShell(inner) {
@@ -416,6 +461,7 @@ async function telaAtendimentos(main) {
   main.innerHTML = `
     <div class="head"><div><h2>${admin ? 'Atendimentos da equipe' : 'Atendimentos'}</h2><p>${esc(nomeMes(S.mes))}</p></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${botaoAtu()}
         <button class="btn" id="exp">Exportar Excel</button>
         <button class="btn primary" id="novo">+ Novo atendimento</button>
       </div></div>
@@ -804,9 +850,9 @@ function refresh() { if (S.recarregar && rota() === 'atendimentos') S.recarregar
 async function telaAgenda(main) {
   S.recarregar = null;
   main.innerHTML = `<div class="head"><div><h2>Agenda</h2><p>Atendimentos com status AGENDADO, em ordem de horário.</p></div>
-    <button class="btn primary" id="novo">+ Novo atendimento</button></div><div id="lista"><div class="empty">Carregando…</div></div>`;
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${botaoAtu()}<button class="btn primary" id="novo">+ Novo atendimento</button></div></div><div id="lista"><div class="empty">Carregando…</div></div>`;
   $('#novo').onclick = () => formAtendimento(null);
-  let lista; try { lista = await api.listarAgendados({ uid: isAdmin() ? null : S.perfil.id }); } catch (e) { return toast(e.message, true); }
+  let lista; try { lista = await api.listarAgendados({ uid: isAdmin() ? null : S.perfil.id }); S.assin_agenda = assinatura(lista); } catch (e) { return toast(e.message, true); }
   lista.sort((a, b) => (a.agendamento || '9999').localeCompare(b.agendamento || '9999'));
   if (!lista.length) { $('#lista').innerHTML = `<div class="card"><div class="empty">Nenhum atendimento agendado no momento.</div></div>`; return; }
   const agora = agoraLocal();
@@ -886,11 +932,11 @@ function montarPainel(mes, lista) {
 async function telaPainel(main) {
   S.recarregar = null;
   main.innerHTML = `<div class="head"><div><h2>Painel — Atendimento Técnico Field</h2><p>${esc(nomeMes(S.mes))}</p></div>
-    <div class="toolbar" style="margin:0"><input type="month" id="fMes" value="${S.mes}"><button class="btn" id="exp">Exportar Excel</button></div></div>
+    <div class="toolbar" style="margin:0">${botaoAtu()}<input type="month" id="fMes" value="${S.mes}"><button class="btn" id="exp">Exportar Excel</button></div></div>
     <div id="pn"><div class="empty">Carregando…</div></div>`;
   $('#fMes').onchange = e => { if (e.target.value) { S.mes = e.target.value; S.painelDia = ''; render(); } };
   $('#exp').onclick = exportarExcel;
-  let lista; try { lista = explodir(await api.listarAtendimentos({ mes: S.mes }), S.mes); } catch (e) { return toast(e.message, true); }
+  let lista; try { const docs = await api.listarAtendimentos({ mes: S.mes }); S.assin_painel = assinatura(docs); lista = explodir(docs, S.mes); } catch (e) { return toast(e.message, true); }
   S.comarcas = [...new Set([...lista.map(a => a.comarca), ...(S.comarcas || [])])];
   const mesGeral = montarPainel(S.mes, lista);        // lista de técnicos do mês (para os seletores)
   if (S.painelTec && !mesGeral.linhas.some(r => r.uid === S.painelTec)) S.painelTec = '';
