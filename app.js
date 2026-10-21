@@ -1,5 +1,5 @@
 /* Sistema de Atendimentos — Field (site estático + Firebase) */
-import { api } from './firebase.js?v=20261021';
+import { api } from './firebase.js?v=20261021b';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -887,7 +887,7 @@ async function telaPainel(main) {
         <div class="kpi fech"><span>Fechado</span><b>${T.fechado}</b></div>
         <div class="kpi tot"><span>Total geral</span><b>${T.total}</b>${T.reabertos ? `<small class="fora">${T.chamados} chamado(s) · ${T.reabertos} reaberto(s)</small>` : ''}</div>
         ${T.devolvido ? `<div class="kpi dev" title="Idas que o setor devolveu; cada ida conta como atendimento"><span>Devolvido</span><b>${T.devolvido}</b></div>` : ''}
-        ${dia ? `<div class="kpi" title="Tempo de atendimento no dia selecionado"><span>Tempo no dia</span><b>${fmtMinCurto(T.min_total || 0)}</b><small class="fora">${T.total} atendimento(s)</small></div>`
+        ${dia ? `<div class="kpi" title="Tempo de atendimento no dia selecionado"><span>Média diária</span><b>${fmtMinCurto(T.min_total || 0)}</b><small class="fora">${fmtData(dia).slice(0, 5)} · ${T.total} atendimento(s)</small></div>`
               : `<div class="kpi" title="Minutos de atendimento ÷ ${p.diasUteis} dias úteis (seg. a sex.)"><span>Média diária</span><b>${p.diasUteis ? fmtMinCurto(Math.round((T.min_total || 0) / p.diasUteis)) : '—'}</b><small class="fora">${String(media).replace('.', ',')} atendimento(s) por dia</small></div>`}
         <div class="kpi"><span>Tempo médio</span><b>${fmtMin(T.min_medio)}</b></div>
         <div class="kpi tent" title="Tempo médio de cada tentativa de contato (início até término)"><span>Média por tentativa</span><b>${fmtMin(T.tent_min_medio)}</b><small class="fora">${T.tent_com_tempo ? fmtMin(T.tent_min_total) + ' em tentativas' : 'sem tentativas com horário'}</small></div>
